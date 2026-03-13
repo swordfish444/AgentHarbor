@@ -1,0 +1,21 @@
+{
+  "name": "agentharbor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Real-time observability platform for distributed AI coding agents.",
+  "packageManager": "pnpm@10.18.3",
+  "scripts": {
+    "build": "pnpm -r --filter './packages/**' --filter './apps/**' build",
+    "dev:control": "pnpm --filter @agentharbor/control-node dev",
+    "dev:dashboard": "pnpm --filter @agentharbor/dashboard dev",
+    "dev:runner": "pnpm --filter @agentharbor/runner dev",
+    "db:generate": "pnpm --filter @agentharbor/control-node prisma generate",
+    "db:push": "pnpm --filter @agentharbor/control-node prisma db push",
+    "lint": "pnpm -r --filter './packages/**' --filter './apps/**' lint",
+    "typecheck": "pnpm -r --filter './packages/**' --filter './apps/**' typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "typescript": "^5.9.2"
+  }
+}

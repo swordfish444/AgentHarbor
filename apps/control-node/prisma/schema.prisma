@@ -1,0 +1,96 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RunnerStatus {
+  enrolled
+  online
+  offline
+}
+
+enum SessionStatus {
+  running
+  completed
+  failed
+}
+
+model Machine {
+  id           String   @id @default(cuid())
+  hostname     String
+  os           String
+  architecture String
+  fingerprint  String   @unique
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  runners      Runner[]
+}
+
+model Runner {
+  id             String           @id @default(cuid())
+  name           String
+  machineName    String
+  status         RunnerStatus     @default(enrolled)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  lastSeenAt     DateTime?
+  machineId      String
+  machine        Machine          @relation(fields: [machineId], references: [id], onDelete: Restrict)
+  sessions       AgentSession[]
+  telemetryEvents TelemetryEvent[]
+  tokens         RunnerToken[]
+
+  @@index([machineId])
+  @@index([lastSeenAt])
+}
+
+model RunnerToken {
+  id         String   @id @default(cuid())
+  runnerId    String
+  tokenHash   String   @unique
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime?
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+  runner      Runner   @relation(fields: [runnerId], references: [id], onDelete: Cascade)
+
+  @@index([runnerId])
+}
+
+model AgentSession {
+  id                String           @id @default(cuid())
+  runnerId          String
+  agentType         String
+  sessionKey        String           @unique
+  status            SessionStatus    @default(running)
+  startedAt         DateTime
+  endedAt           DateTime?
+  summary           String?
+  tokenUsage        Int?
+  durationMs        Int?
+  filesTouchedCount Int?
+  runner            Runner           @relation(fields: [runnerId], references: [id], onDelete: Cascade)
+  telemetryEvents   TelemetryEvent[]
+
+  @@index([runnerId, startedAt])
+  @@index([status, startedAt])
+}
+
+model TelemetryEvent {
+  id         String        @id @default(cuid())
+  runnerId    String
+  sessionId   String?
+  eventType   String
+  payloadJson Json
+  createdAt   DateTime      @default(now())
+  runner      Runner        @relation(fields: [runnerId], references: [id], onDelete: Cascade)
+  session     AgentSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([runnerId, createdAt])
+  @@index([sessionId, createdAt])
+  @@index([eventType, createdAt])
+}

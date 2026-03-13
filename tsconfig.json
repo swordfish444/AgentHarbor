@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "sourceMap": true,
+    "paths": {
+      "@agentharbor/config": ["packages/config/src/index.ts"],
+      "@agentharbor/shared": ["packages/shared/src/index.ts"],
+      "@agentharbor/sdk": ["packages/sdk/src/index.ts"]
+    }
+  }
+}

@@ -1,0 +1,30 @@
+# AgentHarbor Roadmap
+
+## Near term
+
+- Add streaming ingestion with gRPC while preserving the SDK transport abstraction.
+- Introduce token rotation and revocation endpoints.
+- Add runner labels, environment tags, and machine grouping.
+- Expose richer aggregate analytics and filtering in the dashboard.
+- Add API pagination and cursor-based event feeds.
+
+## Security and identity
+
+- mTLS runner identity for stronger machine-bound trust.
+- Certificate enrollment flow for runner bootstrap.
+- Audit logging for auth and token lifecycle events.
+- Rate limiting and signed event batches.
+
+## Platform evolution
+
+- Live event stream in the dashboard.
+- Webhooks and outbound integrations.
+- Session diffing and file-level activity summaries.
+- Retention policies and cold storage.
+
+## Long term
+
+- Agent coordination primitives.
+- Task orchestration and delegation.
+- Policy-driven controls and approvals.
+- Multi-tenant fleet management with RBAC.

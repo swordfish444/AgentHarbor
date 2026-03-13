@@ -1,0 +1,28 @@
+{
+  "name": "@agentharbor/runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "agentharbor": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts && node ../../scripts/add-shebang.mjs dist/index.js dist/index.cjs",
+    "dev": "tsx watch src/index.ts",
+    "lint": "tsc --noEmit",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@agentharbor/config": "workspace:*",
+    "@agentharbor/sdk": "workspace:*",
+    "@agentharbor/shared": "workspace:*",
+    "commander": "^14.0.1"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.5"
+  }
+}

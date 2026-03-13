@@ -1,0 +1,13 @@
+node_modules
+.next
+dist
+coverage
+.turbo
+.DS_Store
+.env
+.env.local
+pnpm-debug.log
+apps/control-node/prisma/dev.db
+apps/control-node/prisma/dev.db-journal
+apps/control-node/.cert-cache
+*.tsbuildinfo

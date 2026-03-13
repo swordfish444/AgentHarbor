@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: agentharbor-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: agentharbor
+      POSTGRES_USER: agentharbor
+      POSTGRES_PASSWORD: agentharbor
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentharbor -d agentharbor"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  control-node:
+    build:
+      context: .
+      dockerfile: apps/control-node/Dockerfile
+    container_name: agentharbor-control-node
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://agentharbor:agentharbor@postgres:5432/agentharbor
+      CONTROL_NODE_HOST: 0.0.0.0
+      CONTROL_NODE_PORT: 8443
+      CONTROL_NODE_TLS_ENABLED: "true"
+      CONTROL_NODE_TLS_ALLOW_SELF_SIGNED: "true"
+      CONTROL_NODE_TOKEN_TTL_DAYS: 30
+    ports:
+      - "8443:8443"
+
+volumes:
+  postgres-data:
