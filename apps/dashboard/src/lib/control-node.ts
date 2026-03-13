@@ -69,6 +69,17 @@ const statsResponseSchema = z.object({
   failedSessionsLast24h: z.number(),
 });
 
+export type DashboardRunner = z.infer<typeof runnerListItemSchema>;
+export type DashboardSession = z.infer<typeof sessionListItemSchema>;
+export type DashboardEvent = z.infer<typeof eventListItemSchema>;
+export type DashboardStats = z.infer<typeof statsResponseSchema>;
+export type DashboardSnapshot = {
+  stats: DashboardStats;
+  runners: DashboardRunner[];
+  sessions: DashboardSession[];
+  events: DashboardEvent[];
+};
+
 const baseUrl = ensureTrailingSlashlessUrl(process.env.AGENTHARBOR_CONTROL_NODE_URL ?? "https://localhost:8443");
 const allowSelfSigned = parseBoolean(process.env.AGENTHARBOR_ALLOW_SELF_SIGNED, true);
 const dispatcher = allowSelfSigned ? new Agent({ connect: { rejectUnauthorized: false } }) : undefined;
