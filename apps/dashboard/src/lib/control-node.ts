@@ -1,77 +1,56 @@
 import { Agent } from "undici";
 import { ensureTrailingSlashlessUrl, parseBoolean } from "@agentharbor/config";
-import { z } from "zod";
+import {
+  eventListItemSchema,
+  eventListQuerySchema,
+  runnerListItemSchema,
+  runnerListQuerySchema,
+  sessionDetailSchema,
+  sessionListItemSchema,
+  sessionListQuerySchema,
+  statsResponseSchema,
+  type EventListItem,
+  type RunnerListItem,
+  type SessionDetail,
+  type SessionListItem,
+  type StatsResponse,
+} from "@agentharbor/shared";
+import type { DashboardFilterOptions, DashboardQuery } from "./dashboard-query";
 
-const telemetryPayloadSchema = z.object({
-  timestamp: z.string(),
-  agentType: z.string(),
-  sessionKey: z.string().optional(),
-  summary: z.string().optional(),
-  category: z.string().optional(),
-  durationMs: z.number().nullable().optional(),
-  tokenUsage: z.number().nullable().optional(),
-  filesTouchedCount: z.number().nullable().optional(),
-  status: z.string().optional(),
-});
-
-const runnerListItemSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  machineName: z.string(),
-  hostname: z.string(),
-  os: z.string(),
-  architecture: z.string(),
-  status: z.string(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-  lastSeenAt: z.string().nullable(),
-  isOnline: z.boolean(),
-  activeSessionCount: z.number(),
-});
-
-const sessionListItemSchema = z.object({
-  id: z.string(),
-  runnerId: z.string(),
-  runnerName: z.string(),
-  agentType: z.string(),
-  sessionKey: z.string(),
-  status: z.string(),
-  startedAt: z.string(),
-  endedAt: z.string().nullable(),
-  summary: z.string().nullable(),
-  tokenUsage: z.number().nullable(),
-  durationMs: z.number().nullable(),
-  filesTouchedCount: z.number().nullable(),
-  eventCount: z.number(),
-});
-
-const eventListItemSchema = z.object({
-  id: z.string(),
-  runnerId: z.string(),
-  runnerName: z.string(),
-  sessionId: z.string().nullable(),
-  sessionKey: z.string().nullable(),
-  eventType: z.string(),
-  payload: telemetryPayloadSchema,
-  createdAt: z.string(),
-});
-
-const sessionDetailSchema = sessionListItemSchema.extend({
-  events: z.array(eventListItemSchema),
-});
-
-const statsResponseSchema = z.object({
-  totalRunners: z.number(),
-  onlineRunners: z.number(),
-  activeSessions: z.number(),
-  sessionsLast24h: z.number(),
-  eventsLast24h: z.number(),
-  failedSessionsLast24h: z.number(),
-});
+export interface DashboardData {
+  stats: StatsResponse;
+  runners: RunnerListItem[];
+  sessions: SessionListItem[];
+  events: EventListItem[];
+}
 
 const baseUrl = ensureTrailingSlashlessUrl(process.env.AGENTHARBOR_CONTROL_NODE_URL ?? "https://localhost:8443");
 const allowSelfSigned = parseBoolean(process.env.AGENTHARBOR_ALLOW_SELF_SIGNED, true);
 const dispatcher = allowSelfSigned ? new Agent({ connect: { rejectUnauthorized: false } }) : undefined;
+
+const dashboardListLimits = {
+  runners: 12,
+  sessions: 10,
+  events: 12,
+  filterRunners: 100,
+} as const;
+
+const buildQueryString = (params: Record<string, string | number | undefined>) => {
+  const searchParams = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value == null) {
+      continue;
+    }
+
+    searchParams.set(key, String(value));
+  }
+
+  const queryString = searchParams.toString();
+  return queryString ? `?${queryString}` : "";
+};
+
+const withQuery = (path: string, params: Record<string, string | number | undefined>) => `${path}${buildQueryString(params)}`;
 
 async function getJson<T>(path: string, schema: { parse: (value: unknown) => T }): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, {
@@ -86,15 +65,108 @@ async function getJson<T>(path: string, schema: { parse: (value: unknown) => T }
   return schema.parse(await response.json());
 }
 
-export const getDashboardData = async () => {
-  const [stats, runners, sessions, events] = await Promise.all([
-    getJson("/v1/stats", statsResponseSchema),
-    getJson("/v1/runners?limit=12", runnerListItemSchema.array()),
-    getJson("/v1/sessions?limit=10", sessionListItemSchema.array()),
-    getJson("/v1/events?limit=12", eventListItemSchema.array()),
-  ]);
+const buildRunnerFilterOptions = (allRunners: RunnerListItem[]): DashboardFilterOptions => {
+  const labels = Array.from(new Set(allRunners.flatMap((runner) => runner.labels))).sort((left, right) =>
+    left.localeCompare(right),
+  );
 
-  return { stats, runners, sessions, events };
+  const runners = [...allRunners]
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((runner) => ({
+      value: runner.id,
+      label: runner.environment ? `${runner.name} - ${runner.environment}` : runner.name,
+    }));
+
+  return {
+    runners,
+    labels: labels.map((label) => ({ value: label, label })),
+  };
 };
 
-export const getSessionDetail = async (id: string) => getJson(`/v1/sessions/${id}`, sessionDetailSchema);
+const getLabelRunnerIds = (allRunners: RunnerListItem[], label: string | undefined) => {
+  if (!label) {
+    return null;
+  }
+
+  return new Set(allRunners.filter((runner) => runner.labels.includes(label)).map((runner) => runner.id));
+};
+
+const matchesRunnerSelection = (
+  runnerId: string,
+  query: DashboardQuery,
+  labelRunnerIds: Set<string> | null,
+) => {
+  if (query.runnerId && runnerId !== query.runnerId) {
+    return false;
+  }
+
+  if (labelRunnerIds && !labelRunnerIds.has(runnerId)) {
+    return false;
+  }
+
+  return true;
+};
+
+export const getDashboardData = async (
+  query: DashboardQuery,
+): Promise<{ data: DashboardData; filterOptions: DashboardFilterOptions }> => {
+  const runnerQuery = runnerListQuerySchema.parse({
+    limit: dashboardListLimits.runners,
+    label: query.label,
+    search: query.search,
+  });
+
+  const sessionQuery = sessionListQuerySchema.parse({
+    limit: dashboardListLimits.sessions,
+    status: query.status,
+    agentType: query.agentType,
+    runnerId: query.runnerId,
+    since: query.since,
+    search: query.search,
+  });
+
+  const eventQuery = eventListQuerySchema.parse({
+    limit: dashboardListLimits.events,
+    eventType:
+      query.status === "failed"
+        ? "agent.session.failed"
+        : query.status === "completed"
+          ? "agent.session.completed"
+          : undefined,
+    agentType: query.agentType,
+    runnerId: query.runnerId,
+    since: query.since,
+    search: query.search,
+  });
+
+  const filterOptionQuery = runnerListQuerySchema.parse({
+    limit: dashboardListLimits.filterRunners,
+  });
+
+  const [stats, runnerResults, sessionResults, eventResults, allRunners] = await Promise.all([
+    getJson("/v1/stats", statsResponseSchema),
+    getJson(withQuery("/v1/runners", runnerQuery), runnerListItemSchema.array()),
+    getJson(withQuery("/v1/sessions", sessionQuery), sessionListItemSchema.array()),
+    getJson(withQuery("/v1/events", eventQuery), eventListItemSchema.array()),
+    getJson(withQuery("/v1/runners", filterOptionQuery), runnerListItemSchema.array()),
+  ]);
+
+  const labelRunnerIds = getLabelRunnerIds(allRunners, query.label);
+
+  const runners = runnerResults.filter((runner) => matchesRunnerSelection(runner.id, query, labelRunnerIds));
+  const sessions = sessionResults.filter((session) => matchesRunnerSelection(session.runnerId, query, labelRunnerIds));
+  const events = eventResults.filter((event) => matchesRunnerSelection(event.runnerId, query, labelRunnerIds));
+
+  return {
+    data: {
+      stats,
+      runners,
+      sessions,
+      events,
+    },
+    filterOptions: buildRunnerFilterOptions(allRunners),
+  };
+};
+
+export const getSessionDetail = async (id: string): Promise<SessionDetail> =>
+  getJson(`/v1/sessions/${id}`, sessionDetailSchema);

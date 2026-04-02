@@ -13,7 +13,7 @@
     "sourceMap": true,
     "paths": {
       "@agentharbor/config": ["packages/config/src/index.ts"],
-      "@agentharbor/shared": ["packages/shared/src/index.ts"],
+      "@agentharbor/shared": ["packages/shared/src/telemetry.ts"],
       "@agentharbor/sdk": ["packages/sdk/src/index.ts"]
     }
   }
