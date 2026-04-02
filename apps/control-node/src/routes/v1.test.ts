@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { after, before, beforeEach, test } from "node:test";
+import { after, beforeEach, test } from "node:test";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -250,5 +250,153 @@ if (!databaseUrl) {
     assert.equal(failedEvents[0]?.eventType, "agent.session.failed");
     assert.equal(failedEvents[0]?.payload.category, "failure");
     assert.equal(failedEvents[0]?.payload.status, "failed");
+  });
+
+  test("accepts legacy stored payload categories when listing events and session detail", async () => {
+    const enrollment = await enrollRunner("backend-runner-legacy");
+
+    const session = await prisma.agentSession.create({
+      data: {
+        runnerId: enrollment.runner.id,
+        agentType: "codex",
+        sessionKey: "legacy-session",
+        status: "completed",
+        startedAt: new Date("2026-04-02T21:00:00.000Z"),
+        endedAt: new Date("2026-04-02T21:01:00.000Z"),
+        summary: "Legacy session summary",
+      },
+    });
+
+    await prisma.telemetryEvent.create({
+      data: {
+        runnerId: enrollment.runner.id,
+        sessionId: session.id,
+        eventType: "agent.prompt.executed",
+        createdAt: new Date("2026-04-02T21:00:30.000Z"),
+        payloadJson: {
+          timestamp: "2026-04-02T21:00:30.000Z",
+          agentType: "codex",
+          sessionKey: "legacy-session",
+          summary: "Legacy event with a non-whitelisted category",
+          category: "legacy-build",
+          status: "completed",
+        },
+      },
+    });
+
+    const eventsResponse = await app.inject({
+      method: "GET",
+      url: "/v1/events?eventType=agent.prompt.executed&search=legacy",
+    });
+
+    assert.equal(eventsResponse.statusCode, 200);
+    const events = eventsResponse.json() as Array<{
+      payload: {
+        summary?: string;
+        category?: string;
+      };
+    }>;
+    assert.equal(events.length, 1);
+    assert.equal(events[0]?.payload.summary, "Legacy event with a non-whitelisted category");
+    assert.equal(events[0]?.payload.category, undefined);
+
+    const sessionDetailResponse = await app.inject({
+      method: "GET",
+      url: `/v1/sessions/${session.id}`,
+    });
+
+    assert.equal(sessionDetailResponse.statusCode, 200);
+    const sessionDetail = sessionDetailResponse.json() as {
+      events: Array<{
+        payload: {
+          summary?: string;
+          category?: string;
+        };
+      }>;
+    };
+    assert.equal(sessionDetail.events.length, 1);
+    assert.equal(sessionDetail.events[0]?.payload.summary, "Legacy event with a non-whitelisted category");
+    assert.equal(sessionDetail.events[0]?.payload.category, undefined);
+  });
+
+  test("searches past the newest event batch so older matching events are still returned", async () => {
+    const enrollment = await enrollRunner("backend-runner-search");
+
+    const session = await prisma.agentSession.create({
+      data: {
+        runnerId: enrollment.runner.id,
+        agentType: "codex",
+        sessionKey: "older-search-match",
+        status: "failed",
+        startedAt: new Date("2026-04-02T22:00:00.000Z"),
+        endedAt: new Date("2026-04-02T22:01:00.000Z"),
+        summary: "Older match session",
+      },
+    });
+
+    await prisma.telemetryEvent.create({
+      data: {
+        runnerId: enrollment.runner.id,
+        sessionId: session.id,
+        eventType: "agent.prompt.executed",
+        createdAt: new Date("2026-04-02T22:00:05.000Z"),
+        payloadJson: {
+          timestamp: "2026-04-02T22:00:05.000Z",
+          agentType: "codex",
+          sessionKey: "older-search-match",
+          summary: "Build failure older match",
+          category: "build",
+          status: "blocked",
+        },
+      },
+    });
+
+    const noisyEvents = Array.from({ length: 260 }, (_, index) => ({
+      runnerId: enrollment.runner.id,
+      sessionId: null,
+      eventType: "runner.heartbeat",
+      createdAt: new Date(`2026-04-02T22:${String(59 - Math.floor(index / 5)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`),
+      payloadJson: {
+        timestamp: `2026-04-02T22:${String(59 - Math.floor(index / 5)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`,
+        agentType: "automation",
+        summary: "Noise heartbeat event",
+        category: "session",
+        status: "online",
+      },
+    }));
+
+    await prisma.telemetryEvent.createMany({
+      data: noisyEvents,
+    });
+
+    const searchResponse = await app.inject({
+      method: "GET",
+      url: "/v1/events?search=build&limit=1",
+    });
+
+    assert.equal(searchResponse.statusCode, 200);
+    const searchedEvents = searchResponse.json() as Array<{
+      payload: {
+        summary?: string;
+      };
+    }>;
+    assert.equal(searchedEvents.length, 1);
+    assert.equal(searchedEvents[0]?.payload.summary, "Build failure older match");
+
+    const agentTypeResponse = await app.inject({
+      method: "GET",
+      url: "/v1/events?agentType=codex&limit=1",
+    });
+
+    assert.equal(agentTypeResponse.statusCode, 200);
+    const agentTypeEvents = agentTypeResponse.json() as Array<{
+      payload: {
+        agentType?: string;
+        summary?: string;
+      };
+    }>;
+    assert.equal(agentTypeEvents.length, 1);
+    assert.equal(agentTypeEvents[0]?.payload.agentType, "codex");
+    assert.equal(agentTypeEvents[0]?.payload.summary, "Build failure older match");
   });
 }
