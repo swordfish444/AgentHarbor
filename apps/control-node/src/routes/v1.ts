@@ -1,5 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import {
+  agentTypes,
+  eventCategories,
   eventListQuerySchema,
   heartbeatRequestSchema,
   runnerEnrollmentRequestSchema,
@@ -50,6 +52,21 @@ const normalizeRunnerStatus = (runner: { status: string; lastSeenAt: Date | null
 
 const includesSearch = (value: string | null | undefined, search: string) =>
   Boolean(value?.toLowerCase().includes(search.toLowerCase()));
+
+const legacyTelemetryEventPayloadSchema = z
+  .object({
+    timestamp: z.string().optional(),
+    agentType: z.string().optional(),
+    sessionKey: z.string().optional(),
+    summary: z.string().optional(),
+    category: z.string().optional(),
+    durationMs: z.number().optional(),
+    tokenUsage: z.number().optional(),
+    filesTouchedCount: z.number().optional(),
+    status: z.string().optional(),
+    metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
+  })
+  .passthrough();
 
 type RunnerListRecord = {
   id: string;
@@ -171,9 +188,77 @@ const serializeEvent = (event: EventListRecord) => ({
   sessionId: event.sessionId,
   sessionKey: event.session?.sessionKey ?? null,
   eventType: event.eventType,
-  payload: telemetryEventPayloadSchema.parse(event.payloadJson),
+  payload: normalizeStoredPayload(event.payloadJson, event.createdAt),
   createdAt: event.createdAt.toISOString(),
 });
+
+const normalizePositiveInteger = (value: unknown) => {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    return undefined;
+  }
+
+  return value;
+};
+
+const normalizeStoredPayload = (payloadJson: unknown, createdAt: Date) => {
+  const parsed = telemetryEventPayloadSchema.safeParse(payloadJson);
+  if (parsed.success) {
+    return parsed.data;
+  }
+
+  const legacyPayload = legacyTelemetryEventPayloadSchema.safeParse(payloadJson);
+  if (!legacyPayload.success) {
+    return telemetryEventPayloadSchema.parse({
+      timestamp: createdAt.toISOString(),
+      agentType: "custom",
+    });
+  }
+
+  const payload = legacyPayload.data;
+  const timestamp = z.string().datetime().safeParse(payload.timestamp).success ? payload.timestamp : createdAt.toISOString();
+  const agentType = agentTypes.includes(payload.agentType as (typeof agentTypes)[number])
+    ? (payload.agentType as (typeof agentTypes)[number])
+    : "custom";
+  const category = eventCategories.includes(payload.category as (typeof eventCategories)[number])
+    ? (payload.category as (typeof eventCategories)[number])
+    : undefined;
+
+  return telemetryEventPayloadSchema.parse({
+    timestamp,
+    agentType,
+    ...(typeof payload.sessionKey === "string" && payload.sessionKey.length > 0 ? { sessionKey: payload.sessionKey } : {}),
+    ...(typeof payload.summary === "string" ? { summary: payload.summary } : {}),
+    ...(category ? { category } : {}),
+    ...(typeof payload.status === "string" ? { status: payload.status } : {}),
+    ...(normalizePositiveInteger(payload.durationMs) !== undefined ? { durationMs: normalizePositiveInteger(payload.durationMs) } : {}),
+    ...(normalizePositiveInteger(payload.tokenUsage) !== undefined ? { tokenUsage: normalizePositiveInteger(payload.tokenUsage) } : {}),
+    ...(normalizePositiveInteger(payload.filesTouchedCount) !== undefined
+      ? { filesTouchedCount: normalizePositiveInteger(payload.filesTouchedCount) }
+      : {}),
+    ...(payload.metadata ? { metadata: payload.metadata } : {}),
+  });
+};
+
+const eventMatchesFilters = (
+  event: ReturnType<typeof serializeEvent>,
+  query: z.infer<typeof eventListQuerySchema>,
+) => {
+  if (query.agentType && event.payload.agentType !== query.agentType) {
+    return false;
+  }
+
+  if (query.search) {
+    return (
+      includesSearch(event.eventType, query.search) ||
+      includesSearch(event.runnerName, query.search) ||
+      includesSearch(event.sessionKey, query.search) ||
+      includesSearch(event.payload.summary, query.search) ||
+      includesSearch(event.payload.category ?? null, query.search)
+    );
+  }
+
+  return true;
+};
 
 const syncSessionForEvent = async (
   tx: Prisma.TransactionClient,
@@ -487,7 +572,7 @@ export const registerV1Routes = async (app: any) => {
         sessionId: event.sessionId,
         sessionKey: detail.sessionKey,
         eventType: event.eventType,
-        payload: telemetryEventPayloadSchema.parse(event.payloadJson),
+        payload: normalizeStoredPayload(event.payloadJson, event.createdAt),
         createdAt: event.createdAt.toISOString(),
       })),
     };
@@ -497,42 +582,46 @@ export const registerV1Routes = async (app: any) => {
 
   app.get("/v1/events", async (request: any) => {
     const query = eventListQuerySchema.parse(request.query);
-    const events = await prisma.telemetryEvent.findMany({
-      where: {
-        ...(query.eventType ? { eventType: query.eventType } : {}),
-        ...(query.runnerId ? { runnerId: query.runnerId } : {}),
-        ...(query.sessionId ? { sessionId: query.sessionId } : {}),
-        ...(query.since ? { createdAt: { gte: new Date(query.since) } } : {}),
-      },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      take: query.search || query.agentType ? 250 : query.limit ?? 50,
-      include: {
-        runner: true,
-        session: true,
-      },
-    });
+    const limit = query.limit ?? 50;
+    const batchSize = query.search || query.agentType ? 200 : limit;
+    const where: Prisma.TelemetryEventWhereInput = {
+      ...(query.eventType ? { eventType: query.eventType } : {}),
+      ...(query.runnerId ? { runnerId: query.runnerId } : {}),
+      ...(query.sessionId ? { sessionId: query.sessionId } : {}),
+      ...(query.since ? { createdAt: { gte: new Date(query.since) } } : {}),
+    };
+    const filteredEvents: Array<ReturnType<typeof serializeEvent>> = [];
+    let skip = 0;
 
-    const filteredEvents = events
-      .map((event) => serializeEvent(event as unknown as EventListRecord))
-      .filter((event) => {
-        if (query.agentType && event.payload.agentType !== query.agentType) {
-          return false;
-        }
-
-        if (query.search) {
-          return (
-            includesSearch(event.eventType, query.search) ||
-            includesSearch(event.runnerName, query.search) ||
-            includesSearch(event.sessionKey, query.search) ||
-            includesSearch(event.payload.summary, query.search) ||
-            includesSearch(event.payload.category ?? null, query.search)
-          );
-        }
-
-        return true;
+    while (filteredEvents.length < limit) {
+      const events = await prisma.telemetryEvent.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        skip,
+        take: batchSize,
+        include: {
+          runner: true,
+          session: true,
+        },
       });
 
-    return filteredEvents.slice(0, query.limit ?? 50);
+      if (events.length === 0) {
+        break;
+      }
+
+      const matchingEvents = events
+        .map((event) => serializeEvent(event as unknown as EventListRecord))
+        .filter((event) => eventMatchesFilters(event, query));
+
+      filteredEvents.push(...matchingEvents);
+      skip += events.length;
+
+      if (events.length < batchSize) {
+        break;
+      }
+    }
+
+    return filteredEvents.slice(0, limit);
   });
 
   app.get("/v1/stats", async () => {
