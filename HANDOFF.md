@@ -8,23 +8,26 @@
 - Working dashboard with fleet summary and session detail views.
 - Local development path using Docker Compose for Postgres and the control node.
 - Baseline docs for setup, architecture, and roadmap.
+- Runner labels, environment tags, and filterable read APIs for runners, sessions, and events.
+- Automatic runner heartbeat loop with retry/backoff and graceful shutdown.
+- Integration tests covering enrollment, heartbeat, telemetry ingestion, and key filter behavior.
 
 ## What is incomplete
 
-- No background heartbeat scheduler inside the runner yet; heartbeats are CLI-driven.
-- No pagination, search, or retention controls on list endpoints.
+- No pagination or cursor-based feeds on list endpoints yet.
 - No token rotation UX or revocation endpoint.
 - No production auth hardening beyond bearer token hashing and TLS.
-- No automated test suite yet.
+- No live SSE stream or analytics endpoints yet.
 - No gRPC streaming, mTLS, orchestration, or multi-tenant concerns yet.
+- Demo scenario coverage is still narrower than the backend phase plan; `mixed-fleet` and `recovery` are not first-class scenario names yet.
 
 ## Suggested next milestones
 
 ### Milestone 1: Reliability
 
-- Add integration tests for enrollment, heartbeat, and telemetry ingestion.
-- Add seeded demo data and a dashboard loading state.
-- Add automatic runner heartbeat scheduling and graceful retry logic.
+- Expand integration coverage for the remaining filter paths, stats, and future streaming routes.
+- Add seeded demo reset/setup commands and a dashboard loading state.
+- Finish the remaining Phase 2 demo scenarios and rehearsal commands.
 
 ### Milestone 2: Security
 
@@ -34,9 +37,15 @@
 
 ### Milestone 3: Operator experience
 
-- Add filtering, pagination, and live refresh/event streaming in the dashboard.
+- Add pagination and live refresh/event streaming in the dashboard.
 - Add richer session analytics such as files touched, failure categories, and latency.
 - Add downloadable JSON exports for sessions and event history.
+
+## Current recommended focus
+
+- Finish the missing Phase 2 scenario names only if the demo story needs them explicitly.
+- Treat filterable read APIs as largely complete and focus new backend work on Phase 4 live streaming and analytics.
+- Keep docs aligned with the actual backend contract so the frontend team is not working from stale assumptions.
 
 ### Milestone 4: Platform direction
 

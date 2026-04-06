@@ -449,14 +449,37 @@ export const registerV1Routes = async (app: any) => {
 
   app.get("/v1/runners", async (request: any) => {
     const query = runnerListQuerySchema.parse(request.query);
+    const runnerSearch = query.search;
     const runners = await prisma.runner.findMany({
-      where: query.label
-        ? {
-            labels: {
-              has: query.label,
-            },
-          }
-        : undefined,
+      where: {
+        ...(query.label
+          ? {
+              labels: {
+                has: query.label,
+              },
+            }
+          : {}),
+        ...(runnerSearch
+          ? {
+              OR: [
+                { name: { contains: runnerSearch, mode: "insensitive" } },
+                { machineName: { contains: runnerSearch, mode: "insensitive" } },
+                { environment: { contains: runnerSearch, mode: "insensitive" } },
+                {
+                  machine: {
+                    is: {
+                      OR: [
+                        { hostname: { contains: runnerSearch, mode: "insensitive" } },
+                        { os: { contains: runnerSearch, mode: "insensitive" } },
+                        { architecture: { contains: runnerSearch, mode: "insensitive" } },
+                      ],
+                    },
+                  },
+                },
+              ],
+            }
+          : {}),
+      },
       orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
       include: {
         machine: true,
@@ -475,22 +498,13 @@ export const registerV1Routes = async (app: any) => {
     const filteredRunners = runners
       .map((runner) => serializeRunner(runner as RunnerListRecord))
       .filter((runner) => {
-        const search = query.search;
-
+        // Online/offline is derived from lastSeenAt, so status filtering stays post-query.
         if (query.status && runner.status !== query.status) {
           return false;
         }
 
-        if (search) {
-          return (
-            includesSearch(runner.name, search) ||
-            includesSearch(runner.machineName, search) ||
-            includesSearch(runner.hostname, search) ||
-            includesSearch(runner.os, search) ||
-            includesSearch(runner.architecture, search) ||
-            includesSearch(runner.environment, search) ||
-            runner.labels.some((label) => includesSearch(label, search))
-          );
+        if (runnerSearch) {
+          return runner.labels.some((label) => includesSearch(label, runnerSearch));
         }
 
         return true;

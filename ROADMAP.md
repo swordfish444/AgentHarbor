@@ -4,9 +4,9 @@
 
 - Add streaming ingestion with gRPC while preserving the SDK transport abstraction.
 - Introduce token rotation and revocation endpoints.
-- Add runner labels, environment tags, and machine grouping.
-- Expose richer aggregate analytics and filtering in the dashboard.
+- Expose richer aggregate analytics and live data surfaces in the dashboard.
 - Add API pagination and cursor-based event feeds.
+- Add first-class `mixed-fleet` and `recovery` demo scenarios for rehearsal.
 
 ## Security and identity
 

@@ -24,7 +24,7 @@ flowchart LR
 - Authenticates runner requests using bearer tokens hashed at rest.
 - Accepts heartbeats and telemetry events.
 - Maintains normalized runner/session/event state in Postgres.
-- Exposes read APIs for dashboards and future integrations.
+- Exposes filterable read APIs for dashboards and future integrations.
 
 ### Runner node
 
@@ -32,12 +32,14 @@ flowchart LR
 - Sends periodic heartbeats to keep runner liveness accurate.
 - Emits structured telemetry instead of raw prompt content.
 - Simulates activity in demo mode so the platform can be exercised without deep agent integrations.
+- Supports automatic heartbeat loops plus multi-runner scenario traffic for demo rehearsal.
 
 ### Dashboard
 
 - Reads current fleet state from the control node.
 - Shows online/offline runners, recent sessions, and recent event stream.
 - Provides a session detail page that reconstructs session progress from structured telemetry.
+- Uses real backend queries rather than mocked client-side filtering for core list views.
 
 ## Data flow
 
@@ -47,6 +49,10 @@ flowchart LR
 4. The control node authenticates the token, updates runner liveness, and upserts `AgentSession` state from incoming session events.
 5. Every telemetry event is persisted in `TelemetryEvent`.
 6. The dashboard reads `/v1/runners`, `/v1/sessions`, `/v1/events`, and `/v1/stats` to render the operator console.
+
+## Current boundary
+
+The current system is strong on ingestion, filtering, and dashboard visibility. It does not yet provide SSE streaming, richer analytics endpoints, pagination/cursor feeds, or orchestration features.
 
 ## Database model
 

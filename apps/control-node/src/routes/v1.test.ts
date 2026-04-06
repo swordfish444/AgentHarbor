@@ -399,4 +399,255 @@ if (!databaseUrl) {
     assert.equal(agentTypeEvents[0]?.payload.agentType, "codex");
     assert.equal(agentTypeEvents[0]?.payload.summary, "Build failure older match");
   });
+
+  test("applies since and limit filters with stable ordering for sessions and events", async () => {
+    const enrollment = await enrollRunner("backend-runner-since");
+    const token = enrollment.credentials.token;
+
+    await postTelemetry(token, [
+      {
+        eventType: "agent.session.started",
+        payload: {
+          timestamp: "2026-04-02T19:00:00.000Z",
+          agentType: "codex",
+          sessionKey: "session-old",
+          summary: "Old session started.",
+          category: "session",
+          status: "running",
+        },
+      },
+      {
+        eventType: "agent.session.completed",
+        payload: {
+          timestamp: "2026-04-02T19:05:00.000Z",
+          agentType: "codex",
+          sessionKey: "session-old",
+          summary: "Old session completed.",
+          category: "session",
+          status: "completed",
+          durationMs: 300_000,
+        },
+      },
+      {
+        eventType: "agent.session.started",
+        payload: {
+          timestamp: "2026-04-02T20:10:00.000Z",
+          agentType: "codex",
+          sessionKey: "session-newer",
+          summary: "Newer session started.",
+          category: "session",
+          status: "running",
+        },
+      },
+      {
+        eventType: "agent.session.completed",
+        payload: {
+          timestamp: "2026-04-02T20:15:00.000Z",
+          agentType: "codex",
+          sessionKey: "session-newer",
+          summary: "Newer session completed.",
+          category: "session",
+          status: "completed",
+          durationMs: 300_000,
+        },
+      },
+      {
+        eventType: "agent.session.started",
+        payload: {
+          timestamp: "2026-04-02T21:10:00.000Z",
+          agentType: "codex",
+          sessionKey: "session-newest",
+          summary: "Newest session started.",
+          category: "session",
+          status: "running",
+        },
+      },
+      {
+        eventType: "agent.session.completed",
+        payload: {
+          timestamp: "2026-04-02T21:20:00.000Z",
+          agentType: "codex",
+          sessionKey: "session-newest",
+          summary: "Newest session completed.",
+          category: "session",
+          status: "completed",
+          durationMs: 600_000,
+        },
+      },
+    ]);
+
+    const sessionsResponse = await app.inject({
+      method: "GET",
+      url: "/v1/sessions?status=completed&since=2026-04-02T20:00:00.000Z&limit=2",
+    });
+
+    assert.equal(sessionsResponse.statusCode, 200);
+    const sessions = sessionsResponse.json() as Array<{
+      sessionKey: string;
+      startedAt: string;
+    }>;
+    assert.equal(sessions.length, 2);
+    assert.equal(sessions[0]?.sessionKey, "session-newest");
+    assert.equal(sessions[1]?.sessionKey, "session-newer");
+    assert.equal(new Date(sessions[0]!.startedAt).getTime() > new Date(sessions[1]!.startedAt).getTime(), true);
+
+    const eventsResponse = await app.inject({
+      method: "GET",
+      url: "/v1/events?since=2026-04-02T20:12:00.000Z&limit=2",
+    });
+
+    assert.equal(eventsResponse.statusCode, 200);
+    const events = eventsResponse.json() as Array<{
+      eventType: string;
+      createdAt: string;
+      sessionKey: string | null;
+    }>;
+    assert.equal(events.length, 2);
+    assert.equal(events[0]?.sessionKey, "session-newest");
+    assert.equal(events[1]?.sessionKey, "session-newer");
+    assert.equal(new Date(events[0]!.createdAt).getTime() > new Date(events[1]!.createdAt).getTime(), true);
+  });
+
+  test("filters events by sessionId and limits runners in stable order", async () => {
+    const firstEnrollment = await enrollRunner("backend-runner-alpha");
+    const secondEnrollment = await enrollRunner("backend-runner-beta");
+
+    const firstHeartbeat = await app.inject({
+      method: "POST",
+      url: "/v1/heartbeat",
+      headers: {
+        authorization: `Bearer ${firstEnrollment.credentials.token}`,
+      },
+      payload: {
+        timestamp: "2026-04-02T22:30:00.000Z",
+        activeSessionCount: 0,
+        metadata: {
+          mode: "test",
+        },
+      },
+    });
+
+    const secondHeartbeat = await app.inject({
+      method: "POST",
+      url: "/v1/heartbeat",
+      headers: {
+        authorization: `Bearer ${secondEnrollment.credentials.token}`,
+      },
+      payload: {
+        timestamp: "2026-04-02T22:31:00.000Z",
+        activeSessionCount: 0,
+        metadata: {
+          mode: "test",
+        },
+      },
+    });
+
+    assert.equal(firstHeartbeat.statusCode, 200);
+    assert.equal(secondHeartbeat.statusCode, 200);
+
+    await postTelemetry(firstEnrollment.credentials.token, [
+      {
+        eventType: "agent.session.started",
+        payload: {
+          timestamp: "2026-04-02T22:32:00.000Z",
+          agentType: "codex",
+          sessionKey: "session-alpha",
+          summary: "Alpha session started.",
+          category: "session",
+          status: "running",
+        },
+      },
+      {
+        eventType: "agent.summary.updated",
+        payload: {
+          timestamp: "2026-04-02T22:32:10.000Z",
+          agentType: "codex",
+          sessionKey: "session-alpha",
+          summary: "Alpha progress update.",
+          category: "implementation",
+          status: "in-progress",
+        },
+      },
+      {
+        eventType: "agent.session.completed",
+        payload: {
+          timestamp: "2026-04-02T22:32:20.000Z",
+          agentType: "codex",
+          sessionKey: "session-alpha",
+          summary: "Alpha completed.",
+          category: "session",
+          status: "completed",
+          durationMs: 20_000,
+        },
+      },
+    ]);
+
+    await postTelemetry(secondEnrollment.credentials.token, [
+      {
+        eventType: "agent.session.started",
+        payload: {
+          timestamp: "2026-04-02T22:33:00.000Z",
+          agentType: "cursor",
+          sessionKey: "session-beta",
+          summary: "Beta session started.",
+          category: "session",
+          status: "running",
+        },
+      },
+      {
+        eventType: "agent.session.failed",
+        payload: {
+          timestamp: "2026-04-02T22:33:20.000Z",
+          agentType: "cursor",
+          sessionKey: "session-beta",
+          summary: "Beta failed.",
+          category: "failure",
+          status: "failed",
+          durationMs: 20_000,
+        },
+      },
+    ]);
+
+    const sessionLookupResponse = await app.inject({
+      method: "GET",
+      url: "/v1/sessions?runnerId=" + firstEnrollment.runner.id,
+    });
+
+    assert.equal(sessionLookupResponse.statusCode, 200);
+    const sessionLookup = sessionLookupResponse.json() as Array<{
+      id: string;
+      sessionKey: string;
+    }>;
+    assert.equal(sessionLookup.length, 1);
+    assert.equal(sessionLookup[0]?.sessionKey, "session-alpha");
+
+    const eventsBySessionResponse = await app.inject({
+      method: "GET",
+      url: `/v1/events?sessionId=${sessionLookup[0]!.id}&limit=5`,
+    });
+
+    assert.equal(eventsBySessionResponse.statusCode, 200);
+    const eventsBySession = eventsBySessionResponse.json() as Array<{
+      sessionKey: string | null;
+      createdAt: string;
+    }>;
+    assert.equal(eventsBySession.length, 3);
+    assert.equal(eventsBySession.every((event) => event.sessionKey === "session-alpha"), true);
+    assert.equal(new Date(eventsBySession[0]!.createdAt).getTime() > new Date(eventsBySession[1]!.createdAt).getTime(), true);
+
+    const runnersResponse = await app.inject({
+      method: "GET",
+      url: "/v1/runners?status=online&search=backend-runner&limit=1",
+    });
+
+    assert.equal(runnersResponse.statusCode, 200);
+    const runners = runnersResponse.json() as Array<{
+      id: string;
+      name: string;
+      updatedAt: string;
+    }>;
+    assert.equal(runners.length, 1);
+    assert.equal(runners[0]?.id, secondEnrollment.runner.id);
+    assert.equal(runners[0]?.name, "backend-runner-beta");
+  });
 }

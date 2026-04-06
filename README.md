@@ -8,10 +8,13 @@ The current MVP is deliberately focused on telemetry and visibility. It is not a
 
 - Control node with HTTPS JSON APIs for runner enrollment, token auth, heartbeat, telemetry ingestion, health, and list endpoints.
 - Postgres + Prisma data model for runners, machines, runner tokens, agent sessions, and telemetry events.
-- Runner CLI with `enroll`, `heartbeat`, `send-event`, `demo`, and `show-config`.
+- Runner CLI with `enroll`, `heartbeat`, `heartbeat-loop`, `send-event`, `demo`, and `show-config`.
 - Small SDK that abstracts control-plane transport so the HTTP implementation can later be swapped for gRPC streaming.
 - Next.js dashboard with a control-tower UI for runners, sessions, events, stats, and session detail.
 - Docker Compose for local Postgres plus the control node container.
+- Filterable read APIs for runners, sessions, and events, including `status`, `label`, `search`, `agentType`, `runnerId`, `sessionId`, and `since` where applicable.
+- Demo traffic generation with multi-runner mixed-agent happy-path and failure-burst scenarios.
+- Control-node integration coverage for enrollment, heartbeat, telemetry ingestion, and key filter behavior.
 
 ## Monorepo layout
 
@@ -176,6 +179,8 @@ See [backend-contract.md](./backend-contract.md) for the current backend/fronten
 - `GET /v1/events`
 - `GET /v1/stats`
 
+See [backend-contract.md](./backend-contract.md) for the current query parameters, response fields, and validation examples for the read APIs.
+
 ## Development scripts
 
 - `pnpm build`
@@ -196,4 +201,11 @@ See [backend-contract.md](./backend-contract.md) for the current backend/fronten
 
 ## Status
 
-This repository is a working MVP. The next layers are transport hardening, runner identity, richer analytics, and the eventual coordination/orchestration plane described in [ROADMAP.md](./ROADMAP.md).
+This repository is a working MVP with live enrollment, heartbeats, telemetry ingestion, demo traffic generation, filterable read APIs, and dashboard views wired to the control node. The next layers are streaming analytics, stronger runner identity, pagination/feed ergonomics, and the eventual coordination/orchestration plane described in [ROADMAP.md](./ROADMAP.md).
+
+Current known gaps:
+
+- no SSE/live stream endpoint yet
+- no analytics endpoints beyond `/v1/stats`
+- no pagination or cursor-based feeds yet
+- demo scenario coverage is still narrower than the backend phase plan; `mixed-fleet` and `recovery` are not first-class scenario names

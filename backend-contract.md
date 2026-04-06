@@ -187,6 +187,28 @@ Online demo runners:
 curl -k "https://localhost:8443/v1/runners?status=online&label=demo"
 ```
 
+Recent sessions since a checkpoint:
+
+```bash
+curl -k "https://localhost:8443/v1/sessions?since=2026-04-02T20:00:00.000Z&limit=10"
+```
+
+Events for one session:
+
+```bash
+curl -k "https://localhost:8443/v1/events?sessionId=<session-id>&limit=20"
+```
+
+## Phase 3 Validation
+
+Use these checks to confirm the filterable read APIs are behaving as expected:
+
+```bash
+curl -k "https://localhost:8443/v1/runners?label=demo&status=online&search=verify"
+curl -k "https://localhost:8443/v1/sessions?status=failed&agentType=codex&runnerId=<runner-id>&since=2026-04-02T20:00:00.000Z&limit=5"
+curl -k "https://localhost:8443/v1/events?eventType=agent.session.failed&agentType=codex&sessionId=<session-id>&since=2026-04-02T20:00:00.000Z&limit=10"
+```
+
 ## Frontend Assumptions
 
 The frontend can assume:
