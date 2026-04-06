@@ -1,17 +1,28 @@
-import { dashboardFixtures, type DashboardFixtureVariant } from "../lib/dashboard-fixtures";
 import { SimpleBarChart } from "./simple-bar-chart";
 
-export function AnalyticsPanel({ variant }: { variant: DashboardFixtureVariant }) {
-  const sections = dashboardFixtures[variant].analytics;
-
+export function AnalyticsPanel({
+  sections,
+  modeLabel,
+}: {
+  sections: Array<{
+    id: string;
+    title: string;
+    description: string;
+    points: Array<{
+      label: string;
+      value: number;
+    }>;
+  }>;
+  modeLabel: string;
+}) {
   return (
     <section className="panel">
       <div className="section-header">
         <div>
           <p className="eyebrow">Analytics</p>
-          <h2>Presentation placeholders</h2>
+          <h2>Fleet aggregates</h2>
         </div>
-        <span className="subtle-badge">Phase 4 live aggregates</span>
+        <span className="subtle-badge">{modeLabel}</span>
       </div>
 
       <div className="chart-grid">

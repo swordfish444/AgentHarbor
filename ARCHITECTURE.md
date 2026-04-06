@@ -52,7 +52,7 @@ flowchart LR
 
 ## Current boundary
 
-The current system is strong on ingestion, filtering, and dashboard visibility. It does not yet provide SSE streaming, richer analytics endpoints, pagination/cursor feeds, or orchestration features.
+The current system is strong on ingestion, filtering, dashboard visibility, basic live streaming, and initial aggregate analytics. It does not yet provide pagination/cursor feeds, richer analytics breadth, or orchestration features.
 
 ## Database model
 

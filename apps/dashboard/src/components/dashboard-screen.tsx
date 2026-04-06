@@ -3,10 +3,9 @@ import { selectDashboardFixtureVariant } from "../lib/dashboard-fixtures";
 import { formatDateTime } from "../lib/formatters";
 import { hasActiveDashboardFilters, type DashboardFilterOptions, type DashboardQuery } from "../lib/dashboard-query";
 import { AlertRail } from "./alert-rail";
-import { AnalyticsPanel } from "./analytics-panel";
+import { DashboardLivePanels } from "./dashboard-live-panels";
 import { FilterBar } from "./filter-bar";
 import { FleetTable } from "./fleet-table";
-import { LiveEventFeed } from "./live-event-feed";
 import { MetricsStrip } from "./metrics-strip";
 import { SessionList } from "./session-list";
 
@@ -37,8 +36,8 @@ export function DashboardScreen({
           <p className="eyebrow">AgentHarbor</p>
           <h1>Control tower visibility for AI agents spread across your fleet.</h1>
           <p className="hero-copy">
-            The dashboard now has a stable screen skeleton, URL-driven filters, and data plumbing aligned to the
-            backend kickoff branch. Live alerts and aggregate analytics still land in the next phases.
+            The dashboard now combines stable URL-driven filters with live telemetry streaming and aggregate analytics
+            from the control node.
           </p>
           {filtered ? (
             <div className="hero-filter-list">
@@ -74,10 +73,7 @@ export function DashboardScreen({
         <SessionList query={query} sessions={data.sessions} />
       </section>
 
-      <section className="dashboard-lower-grid">
-        <LiveEventFeed events={data.events} query={query} />
-        <AnalyticsPanel variant={fixtureVariant} />
-      </section>
+      <DashboardLivePanels initialAnalytics={data.analytics} initialEvents={data.events} query={query} />
     </div>
   );
 }

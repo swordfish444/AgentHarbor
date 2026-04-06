@@ -10,6 +10,8 @@ The goal is to give the frontend team stable backend behavior for:
 - filterable runner/session/event APIs
 - stable failure categories
 - predictable response shapes
+- live event streaming
+- aggregate analytics panels
 
 ## Demo Commands
 
@@ -161,6 +163,37 @@ Response fields the frontend can rely on:
 - `payload`
 - `createdAt`
 
+### `GET /v1/analytics`
+
+Response shape:
+
+- `sections[]`
+
+Each section includes:
+
+- `id`
+- `title`
+- `description`
+- `points[]`
+
+Current section ids:
+
+- `agent-type-distribution`
+- `event-volume`
+- `runner-activity`
+- `failure-categories`
+
+### `GET /v1/stream`
+
+Server-sent event stream.
+
+The frontend should listen for these event names:
+
+- `runner.heartbeat.recorded`
+- `telemetry.event.created`
+- `session.updated`
+- `stats.hint`
+
 ## Example Filter Queries
 
 Successful sessions:
@@ -207,6 +240,61 @@ Use these checks to confirm the filterable read APIs are behaving as expected:
 curl -k "https://localhost:8443/v1/runners?label=demo&status=online&search=verify"
 curl -k "https://localhost:8443/v1/sessions?status=failed&agentType=codex&runnerId=<runner-id>&since=2026-04-02T20:00:00.000Z&limit=5"
 curl -k "https://localhost:8443/v1/events?eventType=agent.session.failed&agentType=codex&sessionId=<session-id>&since=2026-04-02T20:00:00.000Z&limit=10"
+```
+
+## Phase 4 Validation
+
+Analytics response:
+
+```bash
+curl -k "https://localhost:8443/v1/analytics"
+```
+
+Stream subscription:
+
+```bash
+curl -k -N "https://localhost:8443/v1/stream"
+```
+
+Sample stream envelopes:
+
+```json
+{
+  "id": "stream-event-id",
+  "type": "telemetry.event.created",
+  "occurredAt": "2026-04-06T03:19:00.457Z",
+  "payload": {
+    "id": "event-id",
+    "runnerId": "runner-id",
+    "runnerName": "verify-base-codex-1",
+    "sessionId": "session-id",
+    "sessionKey": "verify-base-codex-1-failure-burst-1-ffe825b4",
+    "eventType": "agent.session.failed",
+    "payload": {
+      "timestamp": "2026-04-06T03:19:00.457Z",
+      "agentType": "codex",
+      "summary": "Session failed after repeated build issues.",
+      "category": "failure",
+      "status": "failed"
+    },
+    "createdAt": "2026-04-06T03:19:00.457Z"
+  }
+}
+```
+
+```json
+{
+  "id": "stream-hint-id",
+  "type": "stats.hint",
+  "occurredAt": "2026-04-06T03:19:00.460Z",
+  "payload": {
+    "reason": "telemetry",
+    "timestamp": "2026-04-06T03:19:00.460Z",
+    "runnerId": "runner-id",
+    "sessionId": "session-id",
+    "eventType": "agent.session.failed"
+  }
+}
 ```
 
 ## Frontend Assumptions

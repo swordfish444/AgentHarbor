@@ -650,4 +650,69 @@ if (!databaseUrl) {
     assert.equal(runners[0]?.id, secondEnrollment.runner.id);
     assert.equal(runners[0]?.name, "backend-runner-beta");
   });
+
+  test("returns analytics sections for agent mix, event volume, runner activity, and failure categories", async () => {
+    const enrollment = await enrollRunner("backend-runner-analytics");
+
+    await postTelemetry(enrollment.credentials.token, [
+      {
+        eventType: "agent.session.started",
+        payload: {
+          timestamp: new Date().toISOString(),
+          agentType: "codex",
+          sessionKey: "analytics-session-1",
+          summary: "Analytics session started.",
+          category: "session",
+          status: "running",
+        },
+      },
+      {
+        eventType: "agent.prompt.executed",
+        payload: {
+          timestamp: new Date().toISOString(),
+          agentType: "codex",
+          sessionKey: "analytics-session-1",
+          summary: "Build issue while generating analytics fixture data.",
+          category: "build",
+          status: "blocked",
+        },
+      },
+      {
+        eventType: "agent.session.failed",
+        payload: {
+          timestamp: new Date().toISOString(),
+          agentType: "codex",
+          sessionKey: "analytics-session-1",
+          summary: "Analytics session failed.",
+          category: "failure",
+          status: "failed",
+          durationMs: 10_000,
+        },
+      },
+    ]);
+
+    const analyticsResponse = await app.inject({
+      method: "GET",
+      url: "/v1/analytics",
+    });
+
+    assert.equal(analyticsResponse.statusCode, 200);
+    const analytics = analyticsResponse.json() as {
+      sections: Array<{
+        id: string;
+        points: Array<{
+          label: string;
+          value: number;
+        }>;
+      }>;
+    };
+
+    assert.deepEqual(
+      analytics.sections.map((section) => section.id),
+      ["agent-type-distribution", "event-volume", "runner-activity", "failure-categories"],
+    );
+    assert.equal(analytics.sections[0]?.points.some((point) => point.label === "codex" && point.value >= 1), true);
+    assert.equal(analytics.sections[2]?.points.some((point) => point.label === "backend-runner-analytics"), true);
+    assert.equal(analytics.sections[3]?.points.some((point) => point.label === "Build"), true);
+  });
 }

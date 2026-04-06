@@ -11,13 +11,14 @@
 - Runner labels, environment tags, and filterable read APIs for runners, sessions, and events.
 - Automatic runner heartbeat loop with retry/backoff and graceful shutdown.
 - Integration tests covering enrollment, heartbeat, telemetry ingestion, and key filter behavior.
+- Initial Phase 4 backend support: SSE stream endpoint, aggregate analytics endpoint, and dashboard wiring for live telemetry plus live-refreshing charts.
 
 ## What is incomplete
 
 - No pagination or cursor-based feeds on list endpoints yet.
 - No token rotation UX or revocation endpoint.
 - No production auth hardening beyond bearer token hashing and TLS.
-- No live SSE stream or analytics endpoints yet.
+- No advanced analytics beyond the initial Phase 4 aggregate panels yet.
 - No gRPC streaming, mTLS, orchestration, or multi-tenant concerns yet.
 - Demo scenario coverage is still narrower than the backend phase plan; `mixed-fleet` and `recovery` are not first-class scenario names yet.
 
@@ -37,14 +38,14 @@
 
 ### Milestone 3: Operator experience
 
-- Add pagination and live refresh/event streaming in the dashboard.
+- Add pagination and deeper live refresh behavior across more dashboard surfaces.
 - Add richer session analytics such as files touched, failure categories, and latency.
 - Add downloadable JSON exports for sessions and event history.
 
 ## Current recommended focus
 
 - Finish the missing Phase 2 scenario names only if the demo story needs them explicitly.
-- Treat filterable read APIs as largely complete and focus new backend work on Phase 4 live streaming and analytics.
+- Treat Phases 3 and 4 as functionally in place and focus new backend work on Phase 5 verification, richer analytics, and rehearsal tooling.
 - Keep docs aligned with the actual backend contract so the frontend team is not working from stale assumptions.
 
 ### Milestone 4: Platform direction

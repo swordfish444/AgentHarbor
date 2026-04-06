@@ -202,3 +202,83 @@ export const sessionDetailSchema = sessionListItemSchema.extend({
   events: z.array(eventListItemSchema),
 });
 export type SessionDetail = z.infer<typeof sessionDetailSchema>;
+
+export const analyticsPointSchema = z.object({
+  label: z.string(),
+  value: z.number().int().nonnegative(),
+});
+export type AnalyticsPoint = z.infer<typeof analyticsPointSchema>;
+
+export const analyticsSectionIds = [
+  "agent-type-distribution",
+  "event-volume",
+  "runner-activity",
+  "failure-categories",
+] as const;
+export type AnalyticsSectionId = (typeof analyticsSectionIds)[number];
+
+export const analyticsSectionSchema = z.object({
+  id: z.enum(analyticsSectionIds),
+  title: z.string(),
+  description: z.string(),
+  points: z.array(analyticsPointSchema),
+});
+export type AnalyticsSection = z.infer<typeof analyticsSectionSchema>;
+
+export const analyticsResponseSchema = z.object({
+  sections: z.array(analyticsSectionSchema),
+});
+export type AnalyticsResponse = z.infer<typeof analyticsResponseSchema>;
+
+export const streamEventTypes = [
+  "runner.heartbeat.recorded",
+  "telemetry.event.created",
+  "session.updated",
+  "stats.hint",
+] as const;
+export type StreamEventType = (typeof streamEventTypes)[number];
+
+export const runnerHeartbeatStreamPayloadSchema = z.object({
+  runnerId: z.string(),
+  runnerName: z.string(),
+  activeSessionCount: z.number().int().nonnegative(),
+  timestamp: z.string().datetime(),
+});
+export type RunnerHeartbeatStreamPayload = z.infer<typeof runnerHeartbeatStreamPayloadSchema>;
+
+export const statsHintPayloadSchema = z.object({
+  reason: z.enum(["heartbeat", "telemetry"]),
+  timestamp: z.string().datetime(),
+  runnerId: z.string().optional(),
+  sessionId: z.string().optional(),
+  eventType: z.enum(telemetryEventTypes).optional(),
+});
+export type StatsHintPayload = z.infer<typeof statsHintPayloadSchema>;
+
+export const streamEventEnvelopeSchema = z.discriminatedUnion("type", [
+  z.object({
+    id: z.string(),
+    type: z.literal("runner.heartbeat.recorded"),
+    occurredAt: z.string().datetime(),
+    payload: runnerHeartbeatStreamPayloadSchema,
+  }),
+  z.object({
+    id: z.string(),
+    type: z.literal("telemetry.event.created"),
+    occurredAt: z.string().datetime(),
+    payload: eventListItemSchema,
+  }),
+  z.object({
+    id: z.string(),
+    type: z.literal("session.updated"),
+    occurredAt: z.string().datetime(),
+    payload: sessionListItemSchema,
+  }),
+  z.object({
+    id: z.string(),
+    type: z.literal("stats.hint"),
+    occurredAt: z.string().datetime(),
+    payload: statsHintPayloadSchema,
+  }),
+]);
+export type StreamEventEnvelope = z.infer<typeof streamEventEnvelopeSchema>;

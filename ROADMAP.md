@@ -17,7 +17,6 @@
 
 ## Platform evolution
 
-- Live event stream in the dashboard.
 - Webhooks and outbound integrations.
 - Session diffing and file-level activity summaries.
 - Retention policies and cold storage.

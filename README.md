@@ -15,6 +15,7 @@ The current MVP is deliberately focused on telemetry and visibility. It is not a
 - Filterable read APIs for runners, sessions, and events, including `status`, `label`, `search`, `agentType`, `runnerId`, `sessionId`, and `since` where applicable.
 - Demo traffic generation with multi-runner mixed-agent happy-path and failure-burst scenarios.
 - Control-node integration coverage for enrollment, heartbeat, telemetry ingestion, and key filter behavior.
+- Initial Phase 4 live features: SSE event streaming, aggregate analytics endpoints, and dashboard wiring for live telemetry plus chart refreshes.
 
 ## Monorepo layout
 
@@ -178,6 +179,8 @@ See [backend-contract.md](./backend-contract.md) for the current backend/fronten
 - `GET /v1/sessions/:id`
 - `GET /v1/events`
 - `GET /v1/stats`
+- `GET /v1/analytics`
+- `GET /v1/stream`
 
 See [backend-contract.md](./backend-contract.md) for the current query parameters, response fields, and validation examples for the read APIs.
 
@@ -201,11 +204,10 @@ See [backend-contract.md](./backend-contract.md) for the current query parameter
 
 ## Status
 
-This repository is a working MVP with live enrollment, heartbeats, telemetry ingestion, demo traffic generation, filterable read APIs, and dashboard views wired to the control node. The next layers are streaming analytics, stronger runner identity, pagination/feed ergonomics, and the eventual coordination/orchestration plane described in [ROADMAP.md](./ROADMAP.md).
+This repository is a working MVP with live enrollment, heartbeats, telemetry ingestion, demo traffic generation, filterable read APIs, SSE streaming, initial aggregate analytics, and dashboard views wired to the control node. The next layers are stronger runner identity, richer analytics, pagination/feed ergonomics, and the eventual coordination/orchestration plane described in [ROADMAP.md](./ROADMAP.md).
 
 Current known gaps:
 
-- no SSE/live stream endpoint yet
-- no analytics endpoints beyond `/v1/stats`
 - no pagination or cursor-based feeds yet
 - demo scenario coverage is still narrower than the backend phase plan; `mixed-fleet` and `recovery` are not first-class scenario names
+- no advanced analytics beyond the initial aggregate panels yet

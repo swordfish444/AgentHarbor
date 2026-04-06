@@ -1,21 +1,28 @@
 import type { Prisma } from "@prisma/client";
 import {
   agentTypes,
+  analyticsResponseSchema,
   eventCategories,
+  eventListItemSchema,
   eventListQuerySchema,
   heartbeatRequestSchema,
   runnerEnrollmentRequestSchema,
   runnerListQuerySchema,
   sessionDetailSchema,
+  sessionListItemSchema,
   sessionListQuerySchema,
   sessionStatuses,
   statsResponseSchema,
+  streamEventEnvelopeSchema,
   telemetryEventPayloadSchema,
   telemetryIngestRequestSchema,
+  type EventListItem,
+  type SessionListItem,
 } from "@agentharbor/shared";
 import { z } from "zod";
 import { env } from "../env.js";
 import { authenticateRunner, issueRunnerToken } from "../lib/auth.js";
+import { eventBroadcaster } from "../lib/event-broadcaster.js";
 import { prisma } from "../lib/prisma.js";
 
 const parseTimestamp = (value: string) => new Date(value);
@@ -260,6 +267,63 @@ const eventMatchesFilters = (
   return true;
 };
 
+const oneDayAgo = () => new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+const buildEventVolumePoints = (timestamps: Date[]) => {
+  const bucketDurationMs = 15 * 60 * 1000;
+  const bucketCount = 4;
+  const now = Date.now();
+  const bucketStarts = Array.from({ length: bucketCount }, (_, index) => now - bucketDurationMs * (bucketCount - index));
+  const points = bucketStarts.map((bucketStart) => ({
+    label: new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(new Date(bucketStart)),
+    value: 0,
+  }));
+
+  for (const timestamp of timestamps) {
+    const createdAt = timestamp.getTime();
+
+    if (createdAt < bucketStarts[0] || createdAt >= now) {
+      continue;
+    }
+
+    const bucketIndex = Math.min(Math.floor((createdAt - bucketStarts[0]) / bucketDurationMs), bucketCount - 1);
+    if (bucketIndex >= 0) {
+      points[bucketIndex]!.value += 1;
+    }
+  }
+
+  return points;
+};
+
+const buildFailureCategoryPoints = (
+  events: Array<{
+    payloadJson: unknown;
+    createdAt: Date;
+  }>,
+) => {
+  const allowedCategories = new Set(["build", "test", "network", "auth", "failure", "recovery"]);
+  const counts = new Map<string, number>();
+
+  for (const event of events) {
+    const payload = normalizeStoredPayload(event.payloadJson, event.createdAt);
+    const category = payload.category;
+
+    if (!category || !allowedCategories.has(category)) {
+      continue;
+    }
+
+    counts.set(category, (counts.get(category) ?? 0) + 1);
+  }
+
+  return [...counts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 5)
+    .map(([label, value]) => ({
+      label: label.charAt(0).toUpperCase() + label.slice(1),
+      value,
+    }));
+};
+
 const syncSessionForEvent = async (
   tx: Prisma.TransactionClient,
   runnerId: string,
@@ -410,6 +474,27 @@ export const registerV1Routes = async (app: any) => {
       });
     });
 
+    eventBroadcaster.publish({
+      type: "runner.heartbeat.recorded",
+      occurredAt: now.toISOString(),
+      payload: {
+        runnerId: runner.id,
+        runnerName: runner.name,
+        activeSessionCount: body.activeSessionCount ?? 0,
+        timestamp: now.toISOString(),
+      },
+    });
+
+    eventBroadcaster.publish({
+      type: "stats.hint",
+      occurredAt: now.toISOString(),
+      payload: {
+        reason: "heartbeat",
+        timestamp: now.toISOString(),
+        runnerId: runner.id,
+      },
+    });
+
     return reply.send({ ok: true });
   });
 
@@ -420,11 +505,13 @@ export const registerV1Routes = async (app: any) => {
     }
 
     const body = telemetryIngestRequestSchema.parse(request.body);
+    const touchedSessionIds = new Set<string>();
+    const createdStreamEvents: EventListItem[] = [];
 
     await prisma.$transaction(async (tx) => {
       for (const event of body.events) {
         const session = await syncSessionForEvent(tx, runner.id, event);
-        await tx.telemetryEvent.create({
+        const createdEvent = await tx.telemetryEvent.create({
           data: {
             runnerId: runner.id,
             sessionId: session?.id ?? null,
@@ -433,6 +520,23 @@ export const registerV1Routes = async (app: any) => {
             createdAt: parseTimestamp(event.payload.timestamp),
           },
         });
+
+        if (session?.id) {
+          touchedSessionIds.add(session.id);
+        }
+
+        createdStreamEvents.push(
+          eventListItemSchema.parse({
+          id: createdEvent.id,
+          runnerId: runner.id,
+          runnerName: runner.name,
+          sessionId: session?.id ?? null,
+          sessionKey: event.payload.sessionKey ?? null,
+          eventType: event.eventType,
+          payload: telemetryEventPayloadSchema.parse(event.payload),
+          createdAt: createdEvent.createdAt.toISOString(),
+          }),
+        );
       }
 
       await tx.runner.update({
@@ -444,7 +548,85 @@ export const registerV1Routes = async (app: any) => {
       });
     });
 
+    const updatedSessions =
+      touchedSessionIds.size === 0
+        ? []
+        : await prisma.agentSession.findMany({
+            where: {
+              id: {
+                in: [...touchedSessionIds],
+              },
+            },
+            include: {
+              runner: true,
+              _count: {
+                select: {
+                  telemetryEvents: true,
+                },
+              },
+            },
+          });
+
+    for (const event of createdStreamEvents) {
+      eventBroadcaster.publish({
+        type: "telemetry.event.created",
+        occurredAt: event.createdAt,
+        payload: event,
+      });
+    }
+
+    for (const session of updatedSessions) {
+      const payload: SessionListItem = sessionListItemSchema.parse(serializeSession(session as SessionListRecord));
+      eventBroadcaster.publish({
+        type: "session.updated",
+        occurredAt: payload.endedAt ?? payload.startedAt,
+        payload,
+      });
+    }
+
+    eventBroadcaster.publish({
+      type: "stats.hint",
+      occurredAt: new Date().toISOString(),
+      payload: {
+        reason: "telemetry",
+        timestamp: new Date().toISOString(),
+        runnerId: runner.id,
+        eventType: body.events[body.events.length - 1]?.eventType,
+        sessionId: updatedSessions[updatedSessions.length - 1]?.id,
+      },
+    });
+
     return reply.send({ accepted: body.events.length });
+  });
+
+  app.get("/v1/stream", async (request: any, reply: any) => {
+    reply.hijack();
+
+    reply.raw.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+
+    reply.raw.write("retry: 3000\n");
+    reply.raw.write(": connected\n\n");
+
+    const unsubscribe = eventBroadcaster.subscribe((event) => {
+      const payload = streamEventEnvelopeSchema.parse(event);
+      reply.raw.write(`event: ${payload.type}\n`);
+      reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
+    });
+
+    const keepAlive = setInterval(() => {
+      reply.raw.write(`: keep-alive ${Date.now()}\n\n`);
+    }, 15_000);
+
+    request.raw.on("close", () => {
+      clearInterval(keepAlive);
+      unsubscribe();
+      reply.raw.end();
+    });
   });
 
   app.get("/v1/runners", async (request: any) => {
@@ -639,7 +821,7 @@ export const registerV1Routes = async (app: any) => {
   });
 
   app.get("/v1/stats", async () => {
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const since = oneDayAgo();
 
     const [totalRunners, activeSessions, sessionsLast24h, eventsLast24h, failedSessionsLast24h, runners] = await Promise.all([
       prisma.runner.count(),
@@ -657,6 +839,101 @@ export const registerV1Routes = async (app: any) => {
       sessionsLast24h,
       eventsLast24h,
       failedSessionsLast24h,
+    });
+  });
+
+  app.get("/v1/analytics", async () => {
+    const since = oneDayAgo();
+    const eventVolumeSince = new Date(Date.now() - 60 * 60 * 1000);
+
+    const [agentTypeDistribution, runnerActivityRecords, failureCategoryRecords, recentEventTimestamps] = await Promise.all([
+      prisma.agentSession.groupBy({
+        by: ["agentType"],
+        where: {
+          startedAt: {
+            gte: since,
+          },
+        },
+        _count: {
+          _all: true,
+        },
+      }),
+      prisma.runner.findMany({
+        include: {
+          _count: {
+            select: {
+              telemetryEvents: {
+                where: {
+                  createdAt: {
+                    gte: since,
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+      prisma.telemetryEvent.findMany({
+        where: {
+          createdAt: {
+            gte: since,
+          },
+        },
+        select: {
+          payloadJson: true,
+          createdAt: true,
+        },
+      }),
+      prisma.telemetryEvent.findMany({
+        where: {
+          createdAt: {
+            gte: eventVolumeSince,
+          },
+        },
+        select: {
+          createdAt: true,
+        },
+      }),
+    ]);
+
+    return analyticsResponseSchema.parse({
+      sections: [
+        {
+          id: "agent-type-distribution",
+          title: "Sessions by agent type",
+          description: "24-hour session distribution across the agent fleet.",
+          points: agentTypeDistribution
+            .sort((left, right) => right._count._all - left._count._all || left.agentType.localeCompare(right.agentType))
+            .map((entry) => ({
+              label: entry.agentType,
+              value: entry._count._all,
+            })),
+        },
+        {
+          id: "event-volume",
+          title: "Recent event volume",
+          description: "Telemetry events recorded across the last hour in 15-minute buckets.",
+          points: buildEventVolumePoints(recentEventTimestamps.map((entry) => entry.createdAt)),
+        },
+        {
+          id: "runner-activity",
+          title: "Runner activity",
+          description: "Most active runners over the last 24 hours by event count.",
+          points: runnerActivityRecords
+            .map((runner) => ({
+              label: runner.name,
+              value: runner._count.telemetryEvents,
+            }))
+            .sort((left, right) => right.value - left.value || left.label.localeCompare(right.label))
+            .slice(0, 5),
+        },
+        {
+          id: "failure-categories",
+          title: "Failure categories",
+          description: "Recent failure-oriented categories extracted from structured telemetry.",
+          points: buildFailureCategoryPoints(failureCategoryRecords),
+        },
+      ],
     });
   });
 };

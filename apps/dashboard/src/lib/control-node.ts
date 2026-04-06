@@ -1,6 +1,7 @@
 import { Agent } from "undici";
 import { ensureTrailingSlashlessUrl, parseBoolean } from "@agentharbor/config";
 import {
+  analyticsResponseSchema,
   eventListItemSchema,
   eventListQuerySchema,
   runnerListItemSchema,
@@ -10,6 +11,7 @@ import {
   sessionListQuerySchema,
   statsResponseSchema,
   type EventListItem,
+  type AnalyticsResponse,
   type RunnerListItem,
   type SessionDetail,
   type SessionListItem,
@@ -22,11 +24,13 @@ export interface DashboardData {
   runners: RunnerListItem[];
   sessions: SessionListItem[];
   events: EventListItem[];
+  analytics: AnalyticsResponse["sections"];
 }
 
 const baseUrl = ensureTrailingSlashlessUrl(process.env.AGENTHARBOR_CONTROL_NODE_URL ?? "https://localhost:8443");
 const allowSelfSigned = parseBoolean(process.env.AGENTHARBOR_ALLOW_SELF_SIGNED, true);
 const dispatcher = allowSelfSigned ? new Agent({ connect: { rejectUnauthorized: false } }) : undefined;
+const streamUrl = `${baseUrl}/v1/stream`;
 
 const dashboardListLimits = {
   runners: 12,
@@ -286,8 +290,9 @@ export const getDashboardData = async (
     limit: dashboardListLimits.filterRunners,
   });
 
-  const [stats, runnerResults, allRunners] = await Promise.all([
+  const [stats, analytics, runnerResults, allRunners] = await Promise.all([
     getJson("/v1/stats", statsResponseSchema),
+    getJson("/v1/analytics", analyticsResponseSchema),
     getJson(withQuery("/v1/runners", runnerQuery), runnerListItemSchema.array()),
     getJson(withQuery("/v1/runners", filterOptionQuery), runnerListItemSchema.array()),
   ]);
@@ -310,6 +315,7 @@ export const getDashboardData = async (
       runners,
       sessions,
       events,
+      analytics: analytics.sections,
     },
     filterOptions: buildRunnerFilterOptions(allRunners),
   };
@@ -317,3 +323,5 @@ export const getDashboardData = async (
 
 export const getSessionDetail = async (id: string): Promise<SessionDetail> =>
   getJson(`/v1/sessions/${id}`, sessionDetailSchema);
+
+export const getControlNodeStreamUrl = () => streamUrl;
