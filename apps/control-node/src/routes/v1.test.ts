@@ -715,4 +715,138 @@ if (!databaseUrl) {
     assert.equal(analytics.sections[2]?.points.some((point) => point.label === "backend-runner-analytics"), true);
     assert.equal(analytics.sections[3]?.points.some((point) => point.label === "Build"), true);
   });
+
+  test("keeps label-only runner search matches available", async () => {
+    const enrollment = await app.inject({
+      method: "POST",
+      url: "/v1/enroll",
+      payload: {
+        runnerName: "label-search-runner",
+        labels: ["phase-demo"],
+        environment: "demo",
+        machine: {
+          ...baseMachine,
+          hostname: `${baseMachine.hostname}-label-search`,
+        },
+      },
+    });
+
+    assert.equal(enrollment.statusCode, 200);
+
+    const runnersResponse = await app.inject({
+      method: "GET",
+      url: "/v1/runners?search=phase-demo",
+    });
+
+    assert.equal(runnersResponse.statusCode, 200);
+    const runners = runnersResponse.json() as Array<{
+      name: string;
+      labels: string[];
+    }>;
+
+    assert.equal(runners.length, 1);
+    assert.equal(runners[0]?.name, "label-search-runner");
+    assert.deepEqual(runners[0]?.labels, ["phase-demo"]);
+  });
+
+  test("limits failure category analytics to failed-session telemetry", async () => {
+    const successfulEnrollment = await enrollRunner("backend-runner-success-analytics");
+    const failedEnrollment = await enrollRunner("backend-runner-failure-analytics");
+
+    await postTelemetry(successfulEnrollment.credentials.token, [
+      {
+        eventType: "agent.session.started",
+        payload: {
+          timestamp: new Date().toISOString(),
+          agentType: "codex",
+          sessionKey: "success-analytics-session",
+          summary: "Started a successful session.",
+          category: "session",
+          status: "running",
+        },
+      },
+      {
+        eventType: "agent.prompt.executed",
+        payload: {
+          timestamp: new Date().toISOString(),
+          agentType: "codex",
+          sessionKey: "success-analytics-session",
+          summary: "Temporary network turbulence, but still successful.",
+          category: "network",
+          status: "blocked",
+        },
+      },
+      {
+        eventType: "agent.session.completed",
+        payload: {
+          timestamp: new Date().toISOString(),
+          agentType: "codex",
+          sessionKey: "success-analytics-session",
+          summary: "Completed successfully.",
+          category: "session",
+          status: "completed",
+          durationMs: 5_000,
+        },
+      },
+    ]);
+
+    await postTelemetry(failedEnrollment.credentials.token, [
+      {
+        eventType: "agent.session.started",
+        payload: {
+          timestamp: new Date().toISOString(),
+          agentType: "codex",
+          sessionKey: "failed-analytics-session",
+          summary: "Started a failed session.",
+          category: "session",
+          status: "running",
+        },
+      },
+      {
+        eventType: "agent.prompt.executed",
+        payload: {
+          timestamp: new Date().toISOString(),
+          agentType: "codex",
+          sessionKey: "failed-analytics-session",
+          summary: "Build failures blocked completion.",
+          category: "build",
+          status: "blocked",
+        },
+      },
+      {
+        eventType: "agent.session.failed",
+        payload: {
+          timestamp: new Date().toISOString(),
+          agentType: "codex",
+          sessionKey: "failed-analytics-session",
+          summary: "Failed after repeated build errors.",
+          category: "failure",
+          status: "failed",
+          durationMs: 5_000,
+        },
+      },
+    ]);
+
+    const analyticsResponse = await app.inject({
+      method: "GET",
+      url: "/v1/analytics",
+    });
+
+    assert.equal(analyticsResponse.statusCode, 200);
+    const analytics = analyticsResponse.json() as {
+      sections: Array<{
+        id: string;
+        points: Array<{
+          label: string;
+          value: number;
+        }>;
+      }>;
+    };
+
+    const failureCategories = analytics.sections.find((section) => section.id === "failure-categories");
+    assert.deepEqual(failureCategories?.points, [
+      { label: "Build", value: 1 },
+      { label: "Failure", value: 1 },
+    ]);
+  });
 }

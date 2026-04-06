@@ -1,6 +1,7 @@
 "use client";
 
 import { startTransition, useEffect, useEffectEvent, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   analyticsResponseSchema,
   streamEventEnvelopeSchema,
@@ -37,11 +38,13 @@ export function DashboardLivePanels({
   initialAnalytics: AnalyticsSection[];
   query: DashboardQuery;
 }) {
+  const router = useRouter();
   const filtered = hasActiveDashboardFilters(query);
   const [events, setEvents] = useState(initialEvents);
   const [analytics, setAnalytics] = useState(initialAnalytics);
   const [streamConnected, setStreamConnected] = useState(false);
   const refreshInFlight = useRef<Promise<void> | null>(null);
+  const refreshTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refreshAnalytics = useEffectEvent(async () => {
     if (refreshInFlight.current) {
@@ -67,6 +70,19 @@ export function DashboardLivePanels({
     return refreshInFlight.current;
   });
 
+  const refreshFilteredDashboard = useEffectEvent(() => {
+    if (!filtered || refreshTimeout.current) {
+      return;
+    }
+
+    refreshTimeout.current = setTimeout(() => {
+      refreshTimeout.current = null;
+      startTransition(() => {
+        router.refresh();
+      });
+    }, 300);
+  });
+
   useEffect(() => {
     const eventSource = new EventSource("/api/stream");
 
@@ -86,6 +102,7 @@ export function DashboardLivePanels({
       }
 
       if (filtered) {
+        refreshFilteredDashboard();
         return;
       }
 
@@ -98,19 +115,28 @@ export function DashboardLivePanels({
       void refreshAnalytics();
     };
 
+    const onSessionUpdated = () => {
+      refreshFilteredDashboard();
+      void refreshAnalytics();
+    };
+
     eventSource.addEventListener("telemetry.event.created", onTelemetryEvent as EventListener);
     eventSource.addEventListener("stats.hint", onStatsHint);
     eventSource.addEventListener("runner.heartbeat.recorded", onStatsHint);
-    eventSource.addEventListener("session.updated", onStatsHint);
+    eventSource.addEventListener("session.updated", onSessionUpdated);
 
     return () => {
       eventSource.removeEventListener("telemetry.event.created", onTelemetryEvent as EventListener);
       eventSource.removeEventListener("stats.hint", onStatsHint);
       eventSource.removeEventListener("runner.heartbeat.recorded", onStatsHint);
-      eventSource.removeEventListener("session.updated", onStatsHint);
+      eventSource.removeEventListener("session.updated", onSessionUpdated);
+      if (refreshTimeout.current) {
+        clearTimeout(refreshTimeout.current);
+        refreshTimeout.current = null;
+      }
       eventSource.close();
     };
-  }, [filtered, refreshAnalytics]);
+  }, [filtered, refreshAnalytics, refreshFilteredDashboard, router]);
 
   const eventModeLabel = filtered ? "Filtered snapshot" : streamConnected ? "Live stream" : "Reconnecting";
   const analyticsModeLabel = streamConnected ? "Live aggregates" : "Snapshot fallback";

@@ -324,6 +324,16 @@ const buildFailureCategoryPoints = (
     }));
 };
 
+const buildRunnerWhereInput = (query: z.infer<typeof runnerListQuerySchema>): Prisma.RunnerWhereInput => ({
+  ...(query.label
+    ? {
+        labels: {
+          has: query.label,
+        },
+      }
+    : {}),
+});
+
 const syncSessionForEvent = async (
   tx: Prisma.TransactionClient,
   runnerId: string,
@@ -633,35 +643,9 @@ export const registerV1Routes = async (app: any) => {
     const query = runnerListQuerySchema.parse(request.query);
     const runnerSearch = query.search;
     const runners = await prisma.runner.findMany({
-      where: {
-        ...(query.label
-          ? {
-              labels: {
-                has: query.label,
-              },
-            }
-          : {}),
-        ...(runnerSearch
-          ? {
-              OR: [
-                { name: { contains: runnerSearch, mode: "insensitive" } },
-                { machineName: { contains: runnerSearch, mode: "insensitive" } },
-                { environment: { contains: runnerSearch, mode: "insensitive" } },
-                {
-                  machine: {
-                    is: {
-                      OR: [
-                        { hostname: { contains: runnerSearch, mode: "insensitive" } },
-                        { os: { contains: runnerSearch, mode: "insensitive" } },
-                        { architecture: { contains: runnerSearch, mode: "insensitive" } },
-                      ],
-                    },
-                  },
-                },
-              ],
-            }
-          : {}),
-      },
+      // Label search currently supports substring matches, so we avoid prefiltering on search here.
+      // Otherwise, Prisma could drop label-only matches before the in-memory label search runs.
+      where: buildRunnerWhereInput(query),
       orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
       include: {
         machine: true,
@@ -875,8 +859,10 @@ export const registerV1Routes = async (app: any) => {
       }),
       prisma.telemetryEvent.findMany({
         where: {
-          createdAt: {
-            gte: since,
+          session: {
+            is: {
+              status: "failed",
+            },
           },
         },
         select: {
