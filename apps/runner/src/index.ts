@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { Command } from "commander";
 import { AgentHarborClient } from "@agentharbor/sdk";
 import { type TelemetryEventEnvelope, telemetryEventTypes } from "@agentharbor/shared";
+import { buildDemoRunnerLabels } from "./demo-labels.js";
 
 interface RunnerConfig {
   controlNodeUrl: string;
@@ -253,7 +254,10 @@ const enrollDemoRunner = async ({
   const runnerName = buildDemoRunnerName(baseRunnerName, agentType, runnerIndex);
   const response = await bootstrapClient.enrollRunner({
     runnerName,
-    labels: ["demo", scenario, agentType],
+    labels: buildDemoRunnerLabels({
+      platform: os.platform(),
+      runnerIndex,
+    }),
     environment: "demo",
     machine: {
       hostname: `${machine.hostname}-demo-${runnerIndex + 1}`,

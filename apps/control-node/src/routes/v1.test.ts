@@ -67,6 +67,8 @@ if (!databaseUrl) {
     assert.equal(response.statusCode, 200);
   };
 
+  const heartbeatTimestamp = () => new Date().toISOString();
+
   beforeEach(async () => {
     await prisma.telemetryEvent.deleteMany();
     await prisma.agentSession.deleteMany();
@@ -93,7 +95,7 @@ if (!databaseUrl) {
         authorization: `Bearer ${enrollment.credentials.token}`,
       },
       payload: {
-        timestamp: new Date().toISOString(),
+        timestamp: heartbeatTimestamp(),
         activeSessionCount: 0,
         metadata: {
           mode: "test",
@@ -169,6 +171,120 @@ if (!databaseUrl) {
     assert.equal(offlineRunners.length, 1);
     assert.equal(offlineRunners[0]?.id, offlineRunner.runner.id);
     assert.equal(offlineRunners[0]?.status, "offline");
+  });
+
+  test("groups filtered runners by label with online and active-session rollups", async () => {
+    const alphaEnrollment = await enrollRunner("backend-group-alpha");
+    const betaEnrollment = await enrollRunner("backend-group-beta");
+
+    const frontendEnrollment = await app.inject({
+      method: "POST",
+      url: "/v1/enroll",
+      payload: {
+        runnerName: "frontend-group-runner",
+        labels: ["demo", "frontend", "student-team-b"],
+        environment: "demo",
+        machine: {
+          ...baseMachine,
+          hostname: `${baseMachine.hostname}-frontend-group-runner`,
+        },
+      },
+    });
+    assert.equal(frontendEnrollment.statusCode, 200);
+
+    const alphaHeartbeat = await app.inject({
+      method: "POST",
+      url: "/v1/heartbeat",
+      headers: {
+        authorization: `Bearer ${alphaEnrollment.credentials.token}`,
+      },
+      payload: {
+        timestamp: heartbeatTimestamp(),
+        activeSessionCount: 2,
+        metadata: {
+          mode: "group-test",
+        },
+      },
+    });
+
+    const betaHeartbeat = await app.inject({
+      method: "POST",
+      url: "/v1/heartbeat",
+      headers: {
+        authorization: `Bearer ${betaEnrollment.credentials.token}`,
+      },
+      payload: {
+        timestamp: heartbeatTimestamp(),
+        activeSessionCount: 1,
+        metadata: {
+          mode: "group-test",
+        },
+      },
+    });
+
+    assert.equal(alphaHeartbeat.statusCode, 200);
+    assert.equal(betaHeartbeat.statusCode, 200);
+
+    await prisma.agentSession.create({
+      data: {
+        runnerId: alphaEnrollment.runner.id,
+        agentType: "codex",
+        sessionKey: "grouping-active-session",
+        status: "running",
+        startedAt: new Date("2026-04-02T20:02:30.000Z"),
+        summary: "Active grouped runner session",
+      },
+    });
+
+    const groupResponse = await app.inject({
+      method: "GET",
+      url: "/v1/runners/groups?search=group",
+    });
+
+    assert.equal(groupResponse.statusCode, 200);
+    const groups = groupResponse.json() as Array<{
+      label: string;
+      runnerCount: number;
+      onlineCount: number;
+      activeSessionCount: number;
+      runners: Array<{
+        name: string;
+        status: string;
+      }>;
+    }>;
+
+    const backendGroup = groups.find((group) => group.label === "backend");
+    assert.ok(backendGroup);
+    assert.equal(backendGroup.runnerCount, 2);
+    assert.equal(backendGroup.onlineCount, 2);
+    assert.equal(backendGroup.activeSessionCount, 1);
+    assert.deepEqual(
+      backendGroup.runners.map((runner) => runner.name),
+      ["backend-group-alpha", "backend-group-beta"],
+    );
+
+    const demoGroup = groups.find((group) => group.label === "demo");
+    assert.ok(demoGroup);
+    assert.equal(demoGroup.runnerCount, 3);
+
+    const frontendOnlyResponse = await app.inject({
+      method: "GET",
+      url: "/v1/runners/groups?label=frontend",
+    });
+
+    assert.equal(frontendOnlyResponse.statusCode, 200);
+    const frontendGroups = frontendOnlyResponse.json() as Array<{
+      label: string;
+      runnerCount: number;
+      runners: Array<{
+        name: string;
+      }>;
+    }>;
+
+    assert.equal(frontendGroups.length, 1);
+    assert.equal(frontendGroups[0]?.label, "frontend");
+    assert.equal(frontendGroups[0]?.runnerCount, 1);
+    assert.deepEqual(frontendGroups[0]?.runners.map((runner) => runner.name), ["frontend-group-runner"]);
   });
 
   test("creates completed and failed sessions and exposes filterable sessions and events", async () => {

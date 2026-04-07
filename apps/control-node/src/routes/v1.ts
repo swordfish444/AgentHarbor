@@ -5,6 +5,7 @@ import {
   eventListQuerySchema,
   heartbeatRequestSchema,
   runnerEnrollmentRequestSchema,
+  runnerGroupListQuerySchema,
   runnerListQuerySchema,
   sessionDetailSchema,
   sessionListQuerySchema,
@@ -52,6 +53,133 @@ const normalizeRunnerStatus = (runner: { status: string; lastSeenAt: Date | null
 
 const includesSearch = (value: string | null | undefined, search: string) =>
   Boolean(value?.toLowerCase().includes(search.toLowerCase()));
+
+const buildRunnerListWhere = (query: {
+  runnerId?: string;
+  status?: string;
+  label?: string;
+  search?: string;
+}) => {
+  const onlineSince = new Date(Date.now() - env.runnerOnlineWindowMs);
+  const notOnlineWhere: Prisma.RunnerWhereInput = {
+    OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: onlineSince } }],
+  };
+  const runnerFilters: Prisma.RunnerWhereInput[] = [];
+
+  if (query.status === "online") {
+    runnerFilters.push({ lastSeenAt: { gte: onlineSince } });
+  }
+
+  if (query.status === "enrolled") {
+    runnerFilters.push({
+      ...notOnlineWhere,
+      status: "enrolled",
+    });
+  }
+
+  if (query.status === "offline") {
+    runnerFilters.push({
+      ...notOnlineWhere,
+      status: { not: "enrolled" },
+    });
+  }
+
+  if (query.search) {
+    runnerFilters.push({
+      OR: [
+        { name: { contains: query.search, mode: "insensitive" } },
+        { machineName: { contains: query.search, mode: "insensitive" } },
+        { environment: { contains: query.search, mode: "insensitive" } },
+        { labels: { has: query.search } },
+        {
+          machine: {
+            is: {
+              OR: [
+                { hostname: { contains: query.search, mode: "insensitive" } },
+                { os: { contains: query.search, mode: "insensitive" } },
+                { architecture: { contains: query.search, mode: "insensitive" } },
+              ],
+            },
+          },
+        },
+      ],
+    });
+  }
+
+  return {
+    ...(query.runnerId ? { id: query.runnerId } : {}),
+    ...(query.label ? { labels: { has: query.label } } : {}),
+    ...(runnerFilters.length > 0 ? { AND: runnerFilters } : {}),
+  } satisfies Prisma.RunnerWhereInput;
+};
+
+const sortGroupedRunners = (runners: ReturnType<typeof serializeRunner>[]) =>
+  [...runners].sort((left, right) => {
+    if (left.status !== right.status) {
+      return left.status === "online" ? -1 : right.status === "online" ? 1 : left.status.localeCompare(right.status);
+    }
+
+    if (left.activeSessionCount !== right.activeSessionCount) {
+      return right.activeSessionCount - left.activeSessionCount;
+    }
+
+    return left.name.localeCompare(right.name);
+  });
+
+const groupRunnersByLabel = (
+  runners: ReturnType<typeof serializeRunner>[],
+  selectedLabel?: string,
+) => {
+  const groups = new Map<
+    string,
+    {
+      label: string;
+      runnerCount: number;
+      onlineCount: number;
+      activeSessionCount: number;
+      runners: ReturnType<typeof serializeRunner>[];
+    }
+  >();
+
+  for (const runner of runners) {
+    const labels = selectedLabel ? [selectedLabel] : runner.labels.length > 0 ? runner.labels : ["unlabeled"];
+
+    for (const label of labels) {
+      const current =
+        groups.get(label) ??
+        {
+          label,
+          runnerCount: 0,
+          onlineCount: 0,
+          activeSessionCount: 0,
+          runners: [],
+        };
+
+      current.runnerCount += 1;
+      current.onlineCount += runner.isOnline ? 1 : 0;
+      current.activeSessionCount += runner.activeSessionCount;
+      current.runners.push(runner);
+      groups.set(label, current);
+    }
+  }
+
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      runners: sortGroupedRunners(group.runners),
+    }))
+    .sort((left, right) => {
+      if (left.runnerCount !== right.runnerCount) {
+        return right.runnerCount - left.runnerCount;
+      }
+
+      if (left.onlineCount !== right.onlineCount) {
+        return right.onlineCount - left.onlineCount;
+      }
+
+      return left.label.localeCompare(right.label);
+    });
+};
 
 const legacyTelemetryEventPayloadSchema = z
   .object({
@@ -191,6 +319,34 @@ const serializeEvent = (event: EventListRecord) => ({
   payload: normalizeStoredPayload(event.payloadJson, event.createdAt),
   createdAt: event.createdAt.toISOString(),
 });
+
+const listFilteredRunners = async (query: {
+  runnerId?: string;
+  limit?: number;
+  status?: string;
+  label?: string;
+  search?: string;
+}) => {
+  const runners = await prisma.runner.findMany({
+    where: buildRunnerListWhere(query),
+    orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+    ...(query.limit ? { take: query.limit } : {}),
+    include: {
+      machine: true,
+      _count: {
+        select: {
+          sessions: {
+            where: {
+              status: "running",
+            },
+          },
+        },
+      },
+    },
+  });
+
+  return runners.map((runner) => serializeRunner(runner as RunnerListRecord));
+};
 
 const normalizePositiveInteger = (value: unknown) => {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
@@ -449,77 +605,24 @@ export const registerV1Routes = async (app: any) => {
 
   app.get("/v1/runners", async (request: any) => {
     const query = runnerListQuerySchema.parse(request.query);
-    const onlineSince = new Date(Date.now() - env.runnerOnlineWindowMs);
-    const notOnlineWhere: Prisma.RunnerWhereInput = {
-      OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: onlineSince } }],
-    };
-    const runnerFilters: Prisma.RunnerWhereInput[] = [];
+    return listFilteredRunners({
+      runnerId: query.runnerId,
+      limit: query.limit ?? 25,
+      status: query.status,
+      label: query.label,
+      search: query.search,
+    });
+  });
 
-    if (query.status === "online") {
-      runnerFilters.push({ lastSeenAt: { gte: onlineSince } });
-    }
-
-    if (query.status === "enrolled") {
-      runnerFilters.push({
-        ...notOnlineWhere,
-        status: "enrolled",
-      });
-    }
-
-    if (query.status === "offline") {
-      runnerFilters.push({
-        ...notOnlineWhere,
-        status: { not: "enrolled" },
-      });
-    }
-
-    if (query.search) {
-      runnerFilters.push({
-        OR: [
-          { name: { contains: query.search, mode: "insensitive" } },
-          { machineName: { contains: query.search, mode: "insensitive" } },
-          { environment: { contains: query.search, mode: "insensitive" } },
-          { labels: { has: query.search } },
-          {
-            machine: {
-              is: {
-                OR: [
-                  { hostname: { contains: query.search, mode: "insensitive" } },
-                  { os: { contains: query.search, mode: "insensitive" } },
-                  { architecture: { contains: query.search, mode: "insensitive" } },
-                ],
-              },
-            },
-          },
-        ],
-      });
-    }
-
-    const where: Prisma.RunnerWhereInput = {
-      ...(query.runnerId ? { id: query.runnerId } : {}),
-      ...(query.label ? { labels: { has: query.label } } : {}),
-      ...(runnerFilters.length > 0 ? { AND: runnerFilters } : {}),
-    };
-
-    const runners = await prisma.runner.findMany({
-      where,
-      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
-      take: query.limit ?? 25,
-      include: {
-        machine: true,
-        _count: {
-          select: {
-            sessions: {
-              where: {
-                status: "running",
-              },
-            },
-          },
-        },
-      },
+  app.get("/v1/runners/groups", async (request: any) => {
+    const query = runnerGroupListQuerySchema.parse(request.query);
+    const runners = await listFilteredRunners({
+      status: query.status,
+      label: query.label,
+      search: query.search,
     });
 
-    return runners.map((runner) => serializeRunner(runner as RunnerListRecord));
+    return groupRunnersByLabel(runners, query.label).slice(0, query.limit ?? 12);
   });
 
   app.get("/v1/sessions", async (request: any) => {
