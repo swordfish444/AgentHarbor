@@ -89,65 +89,6 @@ const buildRunnerFilterOptions = (allRunners: RunnerListItem[]): DashboardFilter
   };
 };
 
-const includesSearch = (value: string | null | undefined, search: string) =>
-  value?.toLowerCase().includes(search.toLowerCase()) ?? false;
-
-const getLabelRunnerIds = (allRunners: RunnerListItem[], label: string | undefined) => {
-  if (!label) {
-    return null;
-  }
-
-  return new Set(allRunners.filter((runner) => runner.labels.includes(label)).map((runner) => runner.id));
-};
-
-const matchesRunnerSearch = (runner: RunnerListItem, search: string | undefined) => {
-  if (!search) {
-    return true;
-  }
-
-  return (
-    includesSearch(runner.name, search) ||
-    includesSearch(runner.machineName, search) ||
-    includesSearch(runner.hostname, search) ||
-    includesSearch(runner.os, search) ||
-    includesSearch(runner.architecture, search) ||
-    includesSearch(runner.environment, search) ||
-    runner.labels.some((label) => includesSearch(label, search))
-  );
-};
-
-const matchesRunnerSelection = (
-  runner: RunnerListItem,
-  query: DashboardQuery,
-  labelRunnerIds: Set<string> | null,
-) => {
-  if (query.runnerId && runner.id !== query.runnerId) {
-    return false;
-  }
-
-  if (labelRunnerIds && !labelRunnerIds.has(runner.id)) {
-    return false;
-  }
-
-  return matchesRunnerSearch(runner, query.search);
-};
-
-const resolveScopedRunnerIds = (query: DashboardQuery, labelRunnerIds: Set<string> | null) => {
-  if (query.runnerId) {
-    if (labelRunnerIds && !labelRunnerIds.has(query.runnerId)) {
-      return [];
-    }
-
-    return [query.runnerId];
-  }
-
-  if (labelRunnerIds) {
-    return [...labelRunnerIds];
-  }
-
-  return null;
-};
-
 const uniqueById = <T extends { id: string }>(items: T[]) => {
   const map = new Map<string, T>();
 
@@ -177,12 +118,6 @@ const narrowRunnerGroups = (runnerGroups: RunnerLabelGroup[], runnerId: string |
     })
     .filter((group) => group.runnerCount > 0);
 };
-
-const mergeSessions = (sessionGroups: SessionListItem[][]) =>
-  uniqueById(sessionGroups.flat())
-    .sort((left, right) => toTimestamp(right.startedAt) - toTimestamp(left.startedAt))
-    .slice(0, dashboardListLimits.sessions);
-
 const mergeEvents = (eventGroups: EventListItem[][]) =>
   uniqueById(eventGroups.flat())
     .sort((left, right) => {
@@ -191,38 +126,13 @@ const mergeEvents = (eventGroups: EventListItem[][]) =>
     })
     .slice(0, dashboardListLimits.events);
 
-const fetchSessions = async (query: DashboardQuery, scopedRunnerIds: string[] | null) => {
-  if (scopedRunnerIds && scopedRunnerIds.length === 0) {
-    return [];
-  }
-
-  if (scopedRunnerIds) {
-    const sessionGroups = await Promise.all(
-      scopedRunnerIds.map((runnerId) =>
-        getJson(
-          withQuery(
-            "/v1/sessions",
-            sessionListQuerySchema.parse({
-              limit: dashboardListLimits.sessions,
-              status: query.status,
-              agentType: query.agentType,
-              runnerId,
-              since: query.since,
-              search: query.search,
-            }),
-          ),
-          sessionListItemSchema.array(),
-        ),
-      ),
-    );
-
-    return mergeSessions(sessionGroups);
-  }
-
+const fetchSessions = async (query: DashboardQuery) => {
   const sessionQuery = sessionListQuerySchema.parse({
     limit: dashboardListLimits.sessions,
     status: query.status,
     agentType: query.agentType,
+    runnerId: query.runnerId,
+    label: query.label,
     since: query.since,
     search: query.search,
   });
@@ -232,7 +142,6 @@ const fetchSessions = async (query: DashboardQuery, scopedRunnerIds: string[] | 
 
 const fetchEvents = async (
   query: DashboardQuery,
-  scopedRunnerIds: string[] | null,
   sessionIdsForStatus: string[] | null,
 ) => {
   if (sessionIdsForStatus && sessionIdsForStatus.length === 0) {
@@ -261,35 +170,11 @@ const fetchEvents = async (
     return mergeEvents(eventGroups);
   }
 
-  if (scopedRunnerIds && scopedRunnerIds.length === 0) {
-    return [];
-  }
-
-  if (scopedRunnerIds) {
-    const eventGroups = await Promise.all(
-      scopedRunnerIds.map((runnerId) =>
-        getJson(
-          withQuery(
-            "/v1/events",
-            eventListQuerySchema.parse({
-              limit: dashboardListLimits.events,
-              agentType: query.agentType,
-              runnerId,
-              since: query.since,
-              search: query.search,
-            }),
-          ),
-          eventListItemSchema.array(),
-        ),
-      ),
-    );
-
-    return mergeEvents(eventGroups);
-  }
-
   const eventQuery = eventListQuerySchema.parse({
     limit: dashboardListLimits.events,
     agentType: query.agentType,
+    runnerId: query.runnerId,
+    label: query.label,
     since: query.since,
     search: query.search,
   });
@@ -302,6 +187,7 @@ export const getDashboardData = async (
 ): Promise<{ data: DashboardData; filterOptions: DashboardFilterOptions }> => {
   const runnerQuery = runnerListQuerySchema.parse({
     limit: dashboardListLimits.runners,
+    runnerId: query.runnerId,
     label: query.label,
     search: query.search,
   });
@@ -324,27 +210,16 @@ export const getDashboardData = async (
     getJson(withQuery("/v1/runners/groups", runnerGroupQuery), runnerLabelGroupSchema.array()),
   ]);
 
-  const labelRunnerIds = getLabelRunnerIds(allRunners, query.label);
-  const scopedRunnerIds = resolveScopedRunnerIds(query, labelRunnerIds);
-
-  const sessions = await fetchSessions(query, scopedRunnerIds);
+  const sessions = await fetchSessions(query);
   const statusScopedSessionIds = query.status ? sessions.map((session) => session.id) : null;
-  const events = await fetchEvents(query, scopedRunnerIds, statusScopedSessionIds);
-
-  const runnerSource = query.runnerId ? allRunners : runnerResults;
-  const runners = runnerSource
-    .filter((runner) => matchesRunnerSelection(runner, query, labelRunnerIds))
-    .slice(0, dashboardListLimits.runners);
-  const runnerGroups = narrowRunnerGroups(runnerGroupResults, query.runnerId).map((group) => ({
-    ...group,
-    runners: group.runners.filter((runner) => matchesRunnerSelection(runner, query, labelRunnerIds)),
-  }));
+  const events = await fetchEvents(query, statusScopedSessionIds);
+  const runnerGroups = narrowRunnerGroups(runnerGroupResults, query.runnerId);
 
   return {
     data: {
       stats,
       runnerGroups,
-      runners,
+      runners: runnerResults,
       sessions,
       events,
     },

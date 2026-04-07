@@ -54,44 +54,64 @@ const normalizeRunnerStatus = (runner: { status: string; lastSeenAt: Date | null
 const includesSearch = (value: string | null | undefined, search: string) =>
   Boolean(value?.toLowerCase().includes(search.toLowerCase()));
 
-const runnerMatchesFilters = (
-  runner: ReturnType<typeof serializeRunner>,
-  query: {
-    status?: string;
-    search?: string;
-  },
-) => {
-  if (query.status && runner.status !== query.status) {
-    return false;
+const buildRunnerListWhere = (query: {
+  runnerId?: string;
+  status?: string;
+  label?: string;
+  search?: string;
+}) => {
+  const onlineSince = new Date(Date.now() - env.runnerOnlineWindowMs);
+  const notOnlineWhere: Prisma.RunnerWhereInput = {
+    OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: onlineSince } }],
+  };
+  const runnerFilters: Prisma.RunnerWhereInput[] = [];
+
+  if (query.status === "online") {
+    runnerFilters.push({ lastSeenAt: { gte: onlineSince } });
+  }
+
+  if (query.status === "enrolled") {
+    runnerFilters.push({
+      ...notOnlineWhere,
+      status: "enrolled",
+    });
+  }
+
+  if (query.status === "offline") {
+    runnerFilters.push({
+      ...notOnlineWhere,
+      status: { not: "enrolled" },
+    });
   }
 
   if (query.search) {
-    const search = query.search;
-
-    return (
-      includesSearch(runner.name, search) ||
-      includesSearch(runner.machineName, search) ||
-      includesSearch(runner.hostname, search) ||
-      includesSearch(runner.os, search) ||
-      includesSearch(runner.architecture, search) ||
-      includesSearch(runner.environment, search) ||
-      runner.labels.some((label) => includesSearch(label, search))
-    );
+    runnerFilters.push({
+      OR: [
+        { name: { contains: query.search, mode: "insensitive" } },
+        { machineName: { contains: query.search, mode: "insensitive" } },
+        { environment: { contains: query.search, mode: "insensitive" } },
+        { labels: { has: query.search } },
+        {
+          machine: {
+            is: {
+              OR: [
+                { hostname: { contains: query.search, mode: "insensitive" } },
+                { os: { contains: query.search, mode: "insensitive" } },
+                { architecture: { contains: query.search, mode: "insensitive" } },
+              ],
+            },
+          },
+        },
+      ],
+    });
   }
 
-  return true;
+  return {
+    ...(query.runnerId ? { id: query.runnerId } : {}),
+    ...(query.label ? { labels: { has: query.label } } : {}),
+    ...(runnerFilters.length > 0 ? { AND: runnerFilters } : {}),
+  } satisfies Prisma.RunnerWhereInput;
 };
-
-const buildRunnerWhere = (query: {
-  label?: string;
-}) =>
-  query.label
-    ? {
-        labels: {
-          has: query.label,
-        },
-      }
-    : undefined;
 
 const sortGroupedRunners = (runners: ReturnType<typeof serializeRunner>[]) =>
   [...runners].sort((left, right) => {
@@ -301,14 +321,16 @@ const serializeEvent = (event: EventListRecord) => ({
 });
 
 const listFilteredRunners = async (query: {
+  runnerId?: string;
   limit?: number;
   status?: string;
   label?: string;
   search?: string;
 }) => {
   const runners = await prisma.runner.findMany({
-    where: buildRunnerWhere(query),
+    where: buildRunnerListWhere(query),
     orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+    ...(query.limit ? { take: query.limit } : {}),
     include: {
       machine: true,
       _count: {
@@ -323,11 +345,7 @@ const listFilteredRunners = async (query: {
     },
   });
 
-  const filteredRunners = runners
-    .map((runner) => serializeRunner(runner as RunnerListRecord))
-    .filter((runner) => runnerMatchesFilters(runner, query));
-
-  return query.limit ? filteredRunners.slice(0, query.limit) : filteredRunners;
+  return runners.map((runner) => serializeRunner(runner as RunnerListRecord));
 };
 
 const normalizePositiveInteger = (value: unknown) => {
@@ -588,6 +606,7 @@ export const registerV1Routes = async (app: any) => {
   app.get("/v1/runners", async (request: any) => {
     const query = runnerListQuerySchema.parse(request.query);
     return listFilteredRunners({
+      runnerId: query.runnerId,
       limit: query.limit ?? 25,
       status: query.status,
       label: query.label,
@@ -612,6 +631,7 @@ export const registerV1Routes = async (app: any) => {
       ...(query.status ? { status: query.status } : {}),
       ...(query.agentType ? { agentType: query.agentType } : {}),
       ...(query.runnerId ? { runnerId: query.runnerId } : {}),
+      ...(query.label ? { runner: { is: { labels: { has: query.label } } } } : {}),
       ...(query.since ? { startedAt: { gte: new Date(query.since) } } : {}),
       ...(query.search
         ? {
@@ -695,6 +715,7 @@ export const registerV1Routes = async (app: any) => {
       ...(query.eventType ? { eventType: query.eventType } : {}),
       ...(query.runnerId ? { runnerId: query.runnerId } : {}),
       ...(query.sessionId ? { sessionId: query.sessionId } : {}),
+      ...(query.label ? { runner: { is: { labels: { has: query.label } } } } : {}),
       ...(query.since ? { createdAt: { gte: new Date(query.since) } } : {}),
     };
     const filteredEvents: Array<ReturnType<typeof serializeEvent>> = [];

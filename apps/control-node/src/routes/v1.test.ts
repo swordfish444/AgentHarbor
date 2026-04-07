@@ -19,14 +19,20 @@ if (!databaseUrl) {
     architecture: "arm64",
   };
 
-  const enrollRunner = async (runnerName: string) => {
+  const enrollRunner = async (
+    runnerName: string,
+    options: {
+      labels?: string[];
+      environment?: string;
+    } = {},
+  ) => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/enroll",
       payload: {
         runnerName,
-        labels: ["demo", "backend"],
-        environment: "demo",
+        labels: options.labels ?? ["demo", "backend"],
+        environment: options.environment ?? "demo",
         machine: {
           ...baseMachine,
           hostname: `${baseMachine.hostname}-${runnerName}`,
@@ -120,6 +126,51 @@ if (!databaseUrl) {
     assert.equal(runners[0]?.environment, "demo");
     assert.deepEqual(runners[0]?.labels, ["demo", "backend"]);
     assert.equal(runners[0]?.activeSessionCount, 0);
+
+    const runnerByIdResponse = await app.inject({
+      method: "GET",
+      url: `/v1/runners?runnerId=${enrollment.runner.id}&label=demo`,
+    });
+
+    assert.equal(runnerByIdResponse.statusCode, 200);
+    const runnersById = runnerByIdResponse.json() as Array<{ id: string }>;
+    assert.equal(runnersById.length, 1);
+    assert.equal(runnersById[0]?.id, enrollment.runner.id);
+  });
+
+  test("filters runners by liveness-derived enrolled and offline statuses", async () => {
+    const enrolledRunner = await enrollRunner("backend-runner-enrolled");
+    const offlineRunner = await enrollRunner("backend-runner-offline");
+
+    await prisma.runner.update({
+      where: { id: offlineRunner.runner.id },
+      data: {
+        status: "offline",
+        lastSeenAt: new Date("2026-04-02T20:00:00.000Z"),
+      },
+    });
+
+    const enrolledResponse = await app.inject({
+      method: "GET",
+      url: "/v1/runners?status=enrolled&label=demo&search=backend-runner-enrolled",
+    });
+    assert.equal(enrolledResponse.statusCode, 200);
+
+    const enrolledRunners = enrolledResponse.json() as Array<{ id: string; status: string }>;
+    assert.equal(enrolledRunners.length, 1);
+    assert.equal(enrolledRunners[0]?.id, enrolledRunner.runner.id);
+    assert.equal(enrolledRunners[0]?.status, "enrolled");
+
+    const offlineResponse = await app.inject({
+      method: "GET",
+      url: "/v1/runners?status=offline&label=demo&search=backend-runner-offline",
+    });
+    assert.equal(offlineResponse.statusCode, 200);
+
+    const offlineRunners = offlineResponse.json() as Array<{ id: string; status: string }>;
+    assert.equal(offlineRunners.length, 1);
+    assert.equal(offlineRunners[0]?.id, offlineRunner.runner.id);
+    assert.equal(offlineRunners[0]?.status, "offline");
   });
 
   test("groups filtered runners by label with online and active-session rollups", async () => {
@@ -335,7 +386,7 @@ if (!databaseUrl) {
 
     const failedSessionsResponse = await app.inject({
       method: "GET",
-      url: `/v1/sessions?status=failed&agentType=codex&runnerId=${enrollment.runner.id}`,
+      url: `/v1/sessions?status=failed&agentType=codex&runnerId=${enrollment.runner.id}&label=demo`,
     });
     assert.equal(failedSessionsResponse.statusCode, 200);
 
@@ -349,9 +400,16 @@ if (!databaseUrl) {
     assert.equal(failedSessions[0]?.status, "failed");
     assert.equal(failedSessions[0]?.eventCount, 3);
 
+    const wrongLabelSessionsResponse = await app.inject({
+      method: "GET",
+      url: "/v1/sessions?status=failed&label=frontend",
+    });
+    assert.equal(wrongLabelSessionsResponse.statusCode, 200);
+    assert.deepEqual(wrongLabelSessionsResponse.json(), []);
+
     const failedEventsResponse = await app.inject({
       method: "GET",
-      url: "/v1/events?eventType=agent.session.failed&agentType=codex&search=build",
+      url: "/v1/events?eventType=agent.session.failed&agentType=codex&label=demo&search=build",
     });
     assert.equal(failedEventsResponse.statusCode, 200);
 
@@ -366,6 +424,144 @@ if (!databaseUrl) {
     assert.equal(failedEvents[0]?.eventType, "agent.session.failed");
     assert.equal(failedEvents[0]?.payload.category, "failure");
     assert.equal(failedEvents[0]?.payload.status, "failed");
+
+    const wrongLabelEventsResponse = await app.inject({
+      method: "GET",
+      url: "/v1/events?eventType=agent.session.failed&label=frontend",
+    });
+    assert.equal(wrongLabelEventsResponse.statusCode, 200);
+    assert.deepEqual(wrongLabelEventsResponse.json(), []);
+  });
+
+  test("filters sessions by label, since, and limit in the database query", async () => {
+    const demoEnrollment = await enrollRunner("backend-runner-session-filter");
+    const frontendEnrollment = await enrollRunner("frontend-runner-session-filter", {
+      labels: ["frontend"],
+      environment: "preview",
+    });
+
+    await prisma.agentSession.createMany({
+      data: [
+        {
+          runnerId: demoEnrollment.runner.id,
+          agentType: "codex",
+          sessionKey: "old-demo-session",
+          status: "completed",
+          startedAt: new Date("2026-04-02T20:00:00.000Z"),
+          endedAt: new Date("2026-04-02T20:10:00.000Z"),
+          summary: "Old demo session outside the since window.",
+        },
+        {
+          runnerId: demoEnrollment.runner.id,
+          agentType: "codex",
+          sessionKey: "new-demo-session",
+          status: "completed",
+          startedAt: new Date("2026-04-02T21:00:00.000Z"),
+          endedAt: new Date("2026-04-02T21:10:00.000Z"),
+          summary: "New demo session inside the since window.",
+        },
+        {
+          runnerId: frontendEnrollment.runner.id,
+          agentType: "codex",
+          sessionKey: "new-frontend-session",
+          status: "completed",
+          startedAt: new Date("2026-04-02T21:05:00.000Z"),
+          endedAt: new Date("2026-04-02T21:15:00.000Z"),
+          summary: "Frontend session should be excluded by label.",
+        },
+      ],
+    });
+
+    const sessionsResponse = await app.inject({
+      method: "GET",
+      url: "/v1/sessions?label=demo&since=2026-04-02T19:00:00.000Z&limit=1",
+    });
+
+    assert.equal(sessionsResponse.statusCode, 200);
+    const sessions = sessionsResponse.json() as Array<{ sessionKey: string; runnerId: string }>;
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0]?.sessionKey, "new-demo-session");
+    assert.equal(sessions[0]?.runnerId, demoEnrollment.runner.id);
+  });
+
+  test("filters events by runner, session, event type, since, and limit", async () => {
+    const targetEnrollment = await enrollRunner("backend-runner-event-filter");
+    const otherEnrollment = await enrollRunner("backend-runner-event-noise");
+
+    const targetSession = await prisma.agentSession.create({
+      data: {
+        runnerId: targetEnrollment.runner.id,
+        agentType: "codex",
+        sessionKey: "target-event-session",
+        status: "running",
+        startedAt: new Date("2026-04-02T21:00:00.000Z"),
+        summary: "Target session for event filters.",
+      },
+    });
+
+    await prisma.telemetryEvent.createMany({
+      data: [
+        {
+          runnerId: targetEnrollment.runner.id,
+          sessionId: targetSession.id,
+          eventType: "agent.prompt.executed",
+          createdAt: new Date("2026-04-02T21:00:30.000Z"),
+          payloadJson: {
+            timestamp: "2026-04-02T21:00:30.000Z",
+            agentType: "codex",
+            sessionKey: "target-event-session",
+            summary: "Target old event outside the since window.",
+            category: "implementation",
+          },
+        },
+        {
+          runnerId: targetEnrollment.runner.id,
+          sessionId: targetSession.id,
+          eventType: "agent.prompt.executed",
+          createdAt: new Date("2026-04-02T21:05:00.000Z"),
+          payloadJson: {
+            timestamp: "2026-04-02T21:05:00.000Z",
+            agentType: "codex",
+            sessionKey: "target-event-session",
+            summary: "Target new event inside the since window.",
+            category: "implementation",
+          },
+        },
+        {
+          runnerId: otherEnrollment.runner.id,
+          sessionId: null,
+          eventType: "agent.prompt.executed",
+          createdAt: new Date("2026-04-02T21:06:00.000Z"),
+          payloadJson: {
+            timestamp: "2026-04-02T21:06:00.000Z",
+            agentType: "codex",
+            sessionKey: "other-event-session",
+            summary: "Other runner event should be excluded.",
+            category: "implementation",
+          },
+        },
+      ],
+    });
+
+    const eventsResponse = await app.inject({
+      method: "GET",
+      url: `/v1/events?eventType=agent.prompt.executed&runnerId=${targetEnrollment.runner.id}&sessionId=${targetSession.id}&since=2026-04-02T21:00:00.000Z&limit=1`,
+    });
+
+    assert.equal(eventsResponse.statusCode, 200);
+    const events = eventsResponse.json() as Array<{
+      runnerId: string;
+      sessionId: string | null;
+      eventType: string;
+      payload: {
+        summary?: string;
+      };
+    }>;
+    assert.equal(events.length, 1);
+    assert.equal(events[0]?.runnerId, targetEnrollment.runner.id);
+    assert.equal(events[0]?.sessionId, targetSession.id);
+    assert.equal(events[0]?.eventType, "agent.prompt.executed");
+    assert.equal(events[0]?.payload.summary, "Target new event inside the since window.");
   });
 
   test("accepts legacy stored payload categories when listing events and session detail", async () => {

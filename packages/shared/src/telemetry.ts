@@ -124,6 +124,7 @@ export type StatsResponse = z.infer<typeof statsResponseSchema>;
 
 export const runnerListQuerySchema = z.object({
   limit: limitQuerySchema,
+  runnerId: optionalQueryStringSchema,
   status: z.enum(runnerStatuses).optional(),
   label: runnerLabelSchema.optional(),
   search: optionalQueryStringSchema,
@@ -143,6 +144,7 @@ export const sessionListQuerySchema = z.object({
   status: z.enum(sessionStatuses).optional(),
   agentType: z.enum(agentTypes).optional(),
   runnerId: optionalQueryStringSchema,
+  label: runnerLabelSchema.optional(),
   since: optionalDateTimeQuerySchema,
   search: optionalQueryStringSchema,
 });
@@ -154,6 +156,7 @@ export const eventListQuerySchema = z.object({
   agentType: z.enum(agentTypes).optional(),
   runnerId: optionalQueryStringSchema,
   sessionId: optionalQueryStringSchema,
+  label: runnerLabelSchema.optional(),
   since: optionalDateTimeQuerySchema,
   search: optionalQueryStringSchema,
 });
