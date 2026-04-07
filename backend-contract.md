@@ -128,6 +128,16 @@ Response fields the frontend can rely on:
 - `activeSessionCount`
 - `runners`
 
+### `POST /v1/runners/:id/revoke-tokens`
+
+Revokes all active tokens for a runner. Future heartbeat and telemetry requests using those tokens return `401`.
+
+Response:
+
+- `runnerId`
+- `revokedCount`
+- `revokedAt`
+
 ### `GET /v1/sessions`
 
 Supported query params:

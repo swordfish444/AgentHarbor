@@ -10,6 +10,7 @@ import {
   runnerEnrollmentRequestSchema,
   runnerGroupListQuerySchema,
   runnerListQuerySchema,
+  runnerTokenRevocationResponseSchema,
   sessionDetailSchema,
   sessionListQuerySchema,
   sessionStatuses,
@@ -740,6 +741,42 @@ export const registerV1Routes = async (app: any) => {
     });
 
     return groupRunnersByLabel(runners, query.label).slice(0, query.limit ?? 12);
+  });
+
+  app.post("/v1/runners/:id/revoke-tokens", async (request: any, reply: any) => {
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const revokedAt = new Date();
+    const result = await prisma.$transaction(async (tx) => {
+      const runner = await tx.runner.findUnique({
+        where: { id: params.id },
+        select: { id: true },
+      });
+
+      if (!runner) {
+        return null;
+      }
+
+      const update = await tx.runnerToken.updateMany({
+        where: {
+          runnerId: runner.id,
+          revokedAt: null,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: revokedAt } }],
+        },
+        data: { revokedAt },
+      });
+
+      return {
+        runnerId: runner.id,
+        revokedCount: update.count,
+        revokedAt: revokedAt.toISOString(),
+      };
+    });
+
+    if (!result) {
+      return reply.code(404).send({ error: "Runner not found" });
+    }
+
+    return runnerTokenRevocationResponseSchema.parse(result);
   });
 
   app.get("/v1/stream/events", async (request: any, reply: any) => {

@@ -12,7 +12,11 @@ if (!databaseUrl) {
   process.env.CONTROL_NODE_TLS_ENABLED = "false";
   process.env.DATABASE_URL = databaseUrl;
 
-  const [{ buildServer }, { prisma }] = await Promise.all([import("../server.js"), import("../lib/prisma.js")]);
+  const [{ buildServer }, { prisma }, { hashToken }] = await Promise.all([
+    import("../server.js"),
+    import("../lib/prisma.js"),
+    import("../lib/auth.js"),
+  ]);
   let app = await buildServer();
   let listenUrl: string | null = null;
 
@@ -331,6 +335,84 @@ if (!databaseUrl) {
     assert.equal(frontendGroups[0]?.label, "frontend");
     assert.equal(frontendGroups[0]?.runnerCount, 1);
     assert.deepEqual(frontendGroups[0]?.runners.map((runner) => runner.name), ["frontend-group-runner"]);
+  });
+
+  test("revokes active runner tokens and rejects future heartbeat and telemetry", async () => {
+    const enrollment = await enrollRunner("backend-runner-revoked");
+    const extraActiveToken = "ah_extra_active_revocation_test";
+    const expiredToken = "ah_expired_revocation_test";
+
+    await prisma.runnerToken.createMany({
+      data: [
+        {
+          runnerId: enrollment.runner.id,
+          tokenHash: hashToken(extraActiveToken),
+          expiresAt: new Date(Date.now() + 60_000),
+        },
+        {
+          runnerId: enrollment.runner.id,
+          tokenHash: hashToken(expiredToken),
+          expiresAt: new Date(Date.now() - 60_000),
+        },
+      ],
+    });
+
+    const revokeResponse = await app.inject({
+      method: "POST",
+      url: `/v1/runners/${enrollment.runner.id}/revoke-tokens`,
+    });
+
+    assert.equal(revokeResponse.statusCode, 200);
+    const revokeResult = revokeResponse.json() as { runnerId: string; revokedCount: number; revokedAt: string };
+    assert.equal(revokeResult.runnerId, enrollment.runner.id);
+    assert.equal(revokeResult.revokedCount, 2);
+    assert.doesNotThrow(() => new Date(revokeResult.revokedAt).toISOString());
+
+    const tokens = await prisma.runnerToken.findMany({
+      where: { runnerId: enrollment.runner.id },
+    });
+    assert.equal(tokens.filter((token) => token.revokedAt).length, 2);
+    assert.equal(tokens.find((token) => token.tokenHash === hashToken(expiredToken))?.revokedAt, null);
+
+    const heartbeatResponse = await app.inject({
+      method: "POST",
+      url: "/v1/heartbeat",
+      headers: {
+        authorization: `Bearer ${enrollment.credentials.token}`,
+      },
+      payload: {
+        timestamp: heartbeatTimestamp(),
+      },
+    });
+    assert.equal(heartbeatResponse.statusCode, 401);
+
+    const telemetryResponse = await app.inject({
+      method: "POST",
+      url: "/v1/telemetry",
+      headers: {
+        authorization: `Bearer ${extraActiveToken}`,
+      },
+      payload: {
+        events: [
+          {
+            eventType: "agent.session.started",
+            payload: {
+              timestamp: new Date().toISOString(),
+              agentType: "codex",
+              sessionKey: "revoked-token-session",
+              category: "session",
+            },
+          },
+        ],
+      },
+    });
+    assert.equal(telemetryResponse.statusCode, 401);
+
+    const missingRunnerResponse = await app.inject({
+      method: "POST",
+      url: "/v1/runners/missing-runner/revoke-tokens",
+    });
+    assert.equal(missingRunnerResponse.statusCode, 404);
   });
 
   test("creates completed and failed sessions and exposes filterable sessions and events", async () => {

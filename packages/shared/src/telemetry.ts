@@ -83,6 +83,13 @@ export const runnerEnrollmentResponseSchema = z.object({
 });
 export type RunnerEnrollmentResponse = z.infer<typeof runnerEnrollmentResponseSchema>;
 
+export const runnerTokenRevocationResponseSchema = z.object({
+  runnerId: z.string(),
+  revokedCount: z.number().int().nonnegative(),
+  revokedAt: z.string().datetime(),
+});
+export type RunnerTokenRevocationResponse = z.infer<typeof runnerTokenRevocationResponseSchema>;
+
 export const telemetryEventPayloadSchema = z.object({
   timestamp: z.string().datetime(),
   agentType: z.enum(agentTypes),
