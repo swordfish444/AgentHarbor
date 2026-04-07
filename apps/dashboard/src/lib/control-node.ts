@@ -3,6 +3,8 @@ import { ensureTrailingSlashlessUrl, parseBoolean } from "@agentharbor/config";
 import {
   eventListItemSchema,
   eventListQuerySchema,
+  runnerGroupListQuerySchema,
+  runnerLabelGroupSchema,
   runnerListItemSchema,
   runnerListQuerySchema,
   sessionDetailSchema,
@@ -10,6 +12,7 @@ import {
   sessionListQuerySchema,
   statsResponseSchema,
   type EventListItem,
+  type RunnerLabelGroup,
   type RunnerListItem,
   type SessionDetail,
   type SessionListItem,
@@ -19,6 +22,7 @@ import type { DashboardFilterOptions, DashboardQuery } from "./dashboard-query";
 
 export interface DashboardData {
   stats: StatsResponse;
+  runnerGroups: RunnerLabelGroup[];
   runners: RunnerListItem[];
   sessions: SessionListItem[];
   events: EventListItem[];
@@ -154,6 +158,26 @@ const uniqueById = <T extends { id: string }>(items: T[]) => {
   return [...map.values()];
 };
 
+const narrowRunnerGroups = (runnerGroups: RunnerLabelGroup[], runnerId: string | undefined) => {
+  if (!runnerId) {
+    return runnerGroups;
+  }
+
+  return runnerGroups
+    .map((group) => {
+      const runners = group.runners.filter((runner) => runner.id === runnerId);
+
+      return {
+        ...group,
+        runnerCount: runners.length,
+        onlineCount: runners.filter((runner) => runner.isOnline).length,
+        activeSessionCount: runners.reduce((total, runner) => total + runner.activeSessionCount, 0),
+        runners,
+      };
+    })
+    .filter((group) => group.runnerCount > 0);
+};
+
 const mergeSessions = (sessionGroups: SessionListItem[][]) =>
   uniqueById(sessionGroups.flat())
     .sort((left, right) => toTimestamp(right.startedAt) - toTimestamp(left.startedAt))
@@ -282,14 +306,22 @@ export const getDashboardData = async (
     search: query.search,
   });
 
+  const runnerGroupQuery = runnerGroupListQuerySchema.parse({
+    limit: dashboardListLimits.runners,
+    status: undefined,
+    label: query.label,
+    search: query.search,
+  });
+
   const filterOptionQuery = runnerListQuerySchema.parse({
     limit: dashboardListLimits.filterRunners,
   });
 
-  const [stats, runnerResults, allRunners] = await Promise.all([
+  const [stats, runnerResults, allRunners, runnerGroupResults] = await Promise.all([
     getJson("/v1/stats", statsResponseSchema),
     getJson(withQuery("/v1/runners", runnerQuery), runnerListItemSchema.array()),
     getJson(withQuery("/v1/runners", filterOptionQuery), runnerListItemSchema.array()),
+    getJson(withQuery("/v1/runners/groups", runnerGroupQuery), runnerLabelGroupSchema.array()),
   ]);
 
   const labelRunnerIds = getLabelRunnerIds(allRunners, query.label);
@@ -303,10 +335,15 @@ export const getDashboardData = async (
   const runners = runnerSource
     .filter((runner) => matchesRunnerSelection(runner, query, labelRunnerIds))
     .slice(0, dashboardListLimits.runners);
+  const runnerGroups = narrowRunnerGroups(runnerGroupResults, query.runnerId).map((group) => ({
+    ...group,
+    runners: group.runners.filter((runner) => matchesRunnerSelection(runner, query, labelRunnerIds)),
+  }));
 
   return {
     data: {
       stats,
+      runnerGroups,
       runners,
       sessions,
       events,

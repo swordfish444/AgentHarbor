@@ -130,6 +130,14 @@ export const runnerListQuerySchema = z.object({
 });
 export type RunnerListQuery = z.infer<typeof runnerListQuerySchema>;
 
+export const runnerGroupListQuerySchema = z.object({
+  limit: limitQuerySchema,
+  status: z.enum(runnerStatuses).optional(),
+  label: runnerLabelSchema.optional(),
+  search: optionalQueryStringSchema,
+});
+export type RunnerGroupListQuery = z.infer<typeof runnerGroupListQuerySchema>;
+
 export const sessionListQuerySchema = z.object({
   limit: limitQuerySchema,
   status: z.enum(sessionStatuses).optional(),
@@ -168,6 +176,15 @@ export const runnerListItemSchema = z.object({
   activeSessionCount: z.number().int().nonnegative(),
 });
 export type RunnerListItem = z.infer<typeof runnerListItemSchema>;
+
+export const runnerLabelGroupSchema = z.object({
+  label: runnerLabelSchema,
+  runnerCount: z.number().int().nonnegative(),
+  onlineCount: z.number().int().nonnegative(),
+  activeSessionCount: z.number().int().nonnegative(),
+  runners: z.array(runnerListItemSchema),
+});
+export type RunnerLabelGroup = z.infer<typeof runnerLabelGroupSchema>;
 
 export const sessionListItemSchema = z.object({
   id: z.string(),

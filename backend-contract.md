@@ -111,6 +111,22 @@ Response fields the frontend can rely on:
 - `isOnline`
 - `activeSessionCount`
 
+### `GET /v1/runners/groups`
+
+Supported query params:
+
+- `limit`
+- `label`
+- `search`
+
+Response fields the frontend can rely on:
+
+- `label`
+- `runnerCount`
+- `onlineCount`
+- `activeSessionCount`
+- `runners`
+
 ### `GET /v1/sessions`
 
 Supported query params:
@@ -195,4 +211,6 @@ The frontend can assume:
 - completed sessions will carry `status: "completed"`
 - failure scenarios use structured categories instead of free-form strings
 - demo runners will carry the `demo` label and `environment: "demo"`
+- demo grouping labels will include stable values like `backend`, `student-team-a`, `student-team-b`, and the host platform label
+- runner label groups can be rendered directly from `GET /v1/runners/groups`
 - multi-runner traffic can be generated from one command without manual event entry

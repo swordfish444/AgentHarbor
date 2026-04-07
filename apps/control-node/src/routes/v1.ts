@@ -5,6 +5,7 @@ import {
   eventListQuerySchema,
   heartbeatRequestSchema,
   runnerEnrollmentRequestSchema,
+  runnerGroupListQuerySchema,
   runnerListQuerySchema,
   sessionDetailSchema,
   sessionListQuerySchema,
@@ -52,6 +53,113 @@ const normalizeRunnerStatus = (runner: { status: string; lastSeenAt: Date | null
 
 const includesSearch = (value: string | null | undefined, search: string) =>
   Boolean(value?.toLowerCase().includes(search.toLowerCase()));
+
+const runnerMatchesFilters = (
+  runner: ReturnType<typeof serializeRunner>,
+  query: {
+    status?: string;
+    search?: string;
+  },
+) => {
+  if (query.status && runner.status !== query.status) {
+    return false;
+  }
+
+  if (query.search) {
+    const search = query.search;
+
+    return (
+      includesSearch(runner.name, search) ||
+      includesSearch(runner.machineName, search) ||
+      includesSearch(runner.hostname, search) ||
+      includesSearch(runner.os, search) ||
+      includesSearch(runner.architecture, search) ||
+      includesSearch(runner.environment, search) ||
+      runner.labels.some((label) => includesSearch(label, search))
+    );
+  }
+
+  return true;
+};
+
+const buildRunnerWhere = (query: {
+  label?: string;
+}) =>
+  query.label
+    ? {
+        labels: {
+          has: query.label,
+        },
+      }
+    : undefined;
+
+const sortGroupedRunners = (runners: ReturnType<typeof serializeRunner>[]) =>
+  [...runners].sort((left, right) => {
+    if (left.status !== right.status) {
+      return left.status === "online" ? -1 : right.status === "online" ? 1 : left.status.localeCompare(right.status);
+    }
+
+    if (left.activeSessionCount !== right.activeSessionCount) {
+      return right.activeSessionCount - left.activeSessionCount;
+    }
+
+    return left.name.localeCompare(right.name);
+  });
+
+const groupRunnersByLabel = (
+  runners: ReturnType<typeof serializeRunner>[],
+  selectedLabel?: string,
+) => {
+  const groups = new Map<
+    string,
+    {
+      label: string;
+      runnerCount: number;
+      onlineCount: number;
+      activeSessionCount: number;
+      runners: ReturnType<typeof serializeRunner>[];
+    }
+  >();
+
+  for (const runner of runners) {
+    const labels = selectedLabel ? [selectedLabel] : runner.labels.length > 0 ? runner.labels : ["unlabeled"];
+
+    for (const label of labels) {
+      const current =
+        groups.get(label) ??
+        {
+          label,
+          runnerCount: 0,
+          onlineCount: 0,
+          activeSessionCount: 0,
+          runners: [],
+        };
+
+      current.runnerCount += 1;
+      current.onlineCount += runner.isOnline ? 1 : 0;
+      current.activeSessionCount += runner.activeSessionCount;
+      current.runners.push(runner);
+      groups.set(label, current);
+    }
+  }
+
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      runners: sortGroupedRunners(group.runners),
+    }))
+    .sort((left, right) => {
+      if (left.runnerCount !== right.runnerCount) {
+        return right.runnerCount - left.runnerCount;
+      }
+
+      if (left.onlineCount !== right.onlineCount) {
+        return right.onlineCount - left.onlineCount;
+      }
+
+      return left.label.localeCompare(right.label);
+    });
+};
 
 const legacyTelemetryEventPayloadSchema = z
   .object({
@@ -191,6 +299,36 @@ const serializeEvent = (event: EventListRecord) => ({
   payload: normalizeStoredPayload(event.payloadJson, event.createdAt),
   createdAt: event.createdAt.toISOString(),
 });
+
+const listFilteredRunners = async (query: {
+  limit?: number;
+  status?: string;
+  label?: string;
+  search?: string;
+}) => {
+  const runners = await prisma.runner.findMany({
+    where: buildRunnerWhere(query),
+    orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+    include: {
+      machine: true,
+      _count: {
+        select: {
+          sessions: {
+            where: {
+              status: "running",
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const filteredRunners = runners
+    .map((runner) => serializeRunner(runner as RunnerListRecord))
+    .filter((runner) => runnerMatchesFilters(runner, query));
+
+  return query.limit ? filteredRunners.slice(0, query.limit) : filteredRunners;
+};
 
 const normalizePositiveInteger = (value: unknown) => {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
@@ -449,54 +587,23 @@ export const registerV1Routes = async (app: any) => {
 
   app.get("/v1/runners", async (request: any) => {
     const query = runnerListQuerySchema.parse(request.query);
-    const runners = await prisma.runner.findMany({
-      where: query.label
-        ? {
-            labels: {
-              has: query.label,
-            },
-          }
-        : undefined,
-      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
-      include: {
-        machine: true,
-        _count: {
-          select: {
-            sessions: {
-              where: {
-                status: "running",
-              },
-            },
-          },
-        },
-      },
+    return listFilteredRunners({
+      limit: query.limit ?? 25,
+      status: query.status,
+      label: query.label,
+      search: query.search,
+    });
+  });
+
+  app.get("/v1/runners/groups", async (request: any) => {
+    const query = runnerGroupListQuerySchema.parse(request.query);
+    const runners = await listFilteredRunners({
+      status: query.status,
+      label: query.label,
+      search: query.search,
     });
 
-    const filteredRunners = runners
-      .map((runner) => serializeRunner(runner as RunnerListRecord))
-      .filter((runner) => {
-        const search = query.search;
-
-        if (query.status && runner.status !== query.status) {
-          return false;
-        }
-
-        if (search) {
-          return (
-            includesSearch(runner.name, search) ||
-            includesSearch(runner.machineName, search) ||
-            includesSearch(runner.hostname, search) ||
-            includesSearch(runner.os, search) ||
-            includesSearch(runner.architecture, search) ||
-            includesSearch(runner.environment, search) ||
-            runner.labels.some((label) => includesSearch(label, search))
-          );
-        }
-
-        return true;
-      });
-
-    return filteredRunners.slice(0, query.limit ?? 25);
+    return groupRunnersByLabel(runners, query.label).slice(0, query.limit ?? 12);
   });
 
   app.get("/v1/sessions", async (request: any) => {

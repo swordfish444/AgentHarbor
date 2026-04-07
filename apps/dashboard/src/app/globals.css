@@ -265,6 +265,42 @@ select {
   overflow-x: auto;
 }
 
+.runner-group-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin: 18px 0 10px;
+}
+
+.runner-group-card {
+  border: 1px solid rgba(132, 195, 232, 0.08);
+  border-radius: 18px;
+  padding: 16px;
+  background: rgba(9, 23, 37, 0.72);
+}
+
+.runner-group-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.runner-group-header h3 {
+  margin: 8px 0 0;
+  font-size: 1.1rem;
+  text-transform: capitalize;
+}
+
+.runner-group-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin: 14px 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
