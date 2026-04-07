@@ -1,9 +1,12 @@
 import type { Prisma } from "@prisma/client";
 import {
   agentTypes,
+  analyticsBreakdownResponseSchema,
   eventCategories,
+  eventTimeseriesResponseSchema,
   eventListQuerySchema,
   heartbeatRequestSchema,
+  runnerActivityResponseSchema,
   runnerEnrollmentRequestSchema,
   runnerGroupListQuerySchema,
   runnerListQuerySchema,
@@ -54,6 +57,13 @@ const normalizeRunnerStatus = (runner: { status: string; lastSeenAt: Date | null
 
 const includesSearch = (value: string | null | undefined, search: string) =>
   Boolean(value?.toLowerCase().includes(search.toLowerCase()));
+
+const analyticsWindowMs = 24 * 60 * 60 * 1000;
+const eventTimeseriesBucketMs = 5 * 60 * 1000;
+const runnerActivityLimit = 10;
+const failureAnalyticsCategories = new Set<(typeof eventCategories)[number]>(["build", "test", "auth", "network", "failure"]);
+
+const analyticsSince = () => new Date(Date.now() - analyticsWindowMs);
 
 const runnerListInclude = {
   machine: true,
@@ -418,6 +428,30 @@ const eventMatchesFilters = (
 
   return true;
 };
+
+const toAnalyticsBreakdown = (counts: Map<string, number>) =>
+  [...counts.entries()]
+    .map(([key, count]) => ({
+      key,
+      label: key,
+      count,
+    }))
+    .sort((left, right) => {
+      if (left.count !== right.count) {
+        return right.count - left.count;
+      }
+
+      return left.key.localeCompare(right.key);
+    });
+
+const isFailureAnalyticsEvent = (
+  eventType: string,
+  payload: ReturnType<typeof normalizeStoredPayload>,
+) =>
+  eventType === "agent.session.failed" ||
+  payload.status === "failed" ||
+  payload.status === "blocked" ||
+  Boolean(payload.category && failureAnalyticsCategories.has(payload.category));
 
 const publishStatsRefresh = (reason: string, data: Record<string, unknown>) => {
   publishStreamEvent("stats.refresh", {
@@ -860,8 +894,129 @@ export const registerV1Routes = async (app: any) => {
     return filteredEvents.slice(0, limit);
   });
 
+  app.get("/v1/analytics/agent-types", async () => {
+    const groups = await prisma.agentSession.groupBy({
+      by: ["agentType"],
+      where: {
+        startedAt: {
+          gte: analyticsSince(),
+        },
+      },
+      _count: {
+        agentType: true,
+      },
+    });
+
+    const counts = new Map(groups.map((group) => [group.agentType, group._count.agentType]));
+    return analyticsBreakdownResponseSchema.parse({
+      items: toAnalyticsBreakdown(counts),
+    });
+  });
+
+  app.get("/v1/analytics/failures", async () => {
+    const events = await prisma.telemetryEvent.findMany({
+      where: {
+        createdAt: {
+          gte: analyticsSince(),
+        },
+      },
+      select: {
+        eventType: true,
+        payloadJson: true,
+        createdAt: true,
+      },
+    });
+    const counts = new Map<string, number>();
+
+    for (const event of events) {
+      const payload = normalizeStoredPayload(event.payloadJson, event.createdAt);
+
+      if (!isFailureAnalyticsEvent(event.eventType, payload)) {
+        continue;
+      }
+
+      const key = payload.category ?? "unknown";
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+
+    return analyticsBreakdownResponseSchema.parse({
+      items: toAnalyticsBreakdown(counts),
+    });
+  });
+
+  app.get("/v1/analytics/runners/activity", async () => {
+    const groups = await prisma.agentSession.groupBy({
+      by: ["runnerId"],
+      where: {
+        startedAt: {
+          gte: analyticsSince(),
+        },
+      },
+      _count: {
+        runnerId: true,
+      },
+    });
+    const runners = await prisma.runner.findMany({
+      where: {
+        id: {
+          in: groups.map((group) => group.runnerId),
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+    const runnerNames = new Map(runners.map((runner) => [runner.id, runner.name]));
+
+    return runnerActivityResponseSchema.parse({
+      items: groups
+        .map((group) => ({
+          runnerId: group.runnerId,
+          runnerName: runnerNames.get(group.runnerId) ?? group.runnerId,
+          sessionCount: group._count.runnerId,
+        }))
+        .sort((left, right) => {
+          if (left.sessionCount !== right.sessionCount) {
+            return right.sessionCount - left.sessionCount;
+          }
+
+          return left.runnerName.localeCompare(right.runnerName);
+        })
+        .slice(0, runnerActivityLimit),
+    });
+  });
+
+  app.get("/v1/analytics/events/timeseries", async () => {
+    const events = await prisma.telemetryEvent.findMany({
+      where: {
+        createdAt: {
+          gte: analyticsSince(),
+        },
+      },
+      select: {
+        createdAt: true,
+      },
+    });
+    const counts = new Map<number, number>();
+
+    for (const event of events) {
+      const bucketStart = Math.floor(event.createdAt.getTime() / eventTimeseriesBucketMs) * eventTimeseriesBucketMs;
+      counts.set(bucketStart, (counts.get(bucketStart) ?? 0) + 1);
+    }
+
+    return eventTimeseriesResponseSchema.parse({
+      points: [...counts.entries()]
+        .map(([bucketStart, count]) => ({
+          bucketStart: new Date(bucketStart).toISOString(),
+          count,
+        }))
+        .sort((left, right) => left.bucketStart.localeCompare(right.bucketStart)),
+    });
+  });
+
   app.get("/v1/stats", async () => {
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const since = analyticsSince();
 
     const [totalRunners, activeSessions, sessionsLast24h, eventsLast24h, failedSessionsLast24h, runners] = await Promise.all([
       prisma.runner.count(),

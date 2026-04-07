@@ -198,6 +198,34 @@ Each SSE message uses the event name above and a JSON `data` payload with:
 - `emittedAt`
 - `data`
 
+### Analytics Endpoints
+
+All analytics endpoints are global 24-hour aggregates.
+
+`GET /v1/analytics/agent-types`
+
+Response:
+
+- `items`: `{ key, label, count }[]`
+
+`GET /v1/analytics/failures`
+
+Response:
+
+- `items`: `{ key, label, count }[]`
+
+`GET /v1/analytics/runners/activity`
+
+Response:
+
+- `items`: `{ runnerId, runnerName, sessionCount }[]`
+
+`GET /v1/analytics/events/timeseries`
+
+Response:
+
+- `points`: `{ bucketStart, count }[]`
+
 ## Example Filter Queries
 
 Successful sessions:
@@ -230,6 +258,18 @@ Live dashboard stream:
 curl -k -N "https://localhost:8443/v1/stream/events"
 ```
 
+Agent type analytics:
+
+```bash
+curl -k "https://localhost:8443/v1/analytics/agent-types"
+```
+
+Five-minute event volume:
+
+```bash
+curl -k "https://localhost:8443/v1/analytics/events/timeseries"
+```
+
 ## Frontend Assumptions
 
 The frontend can assume:
@@ -242,3 +282,4 @@ The frontend can assume:
 - runner label groups can be rendered directly from `GET /v1/runners/groups`
 - multi-runner traffic can be generated from one command without manual event entry
 - the dashboard can subscribe to `GET /v1/stream/events` once and refresh snapshots when stream events arrive
+- analytics endpoints are global 24-hour aggregates until dashboard filter-aware analytics are explicitly added
