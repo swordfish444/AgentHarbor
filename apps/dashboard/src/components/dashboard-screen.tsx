@@ -70,7 +70,7 @@ export function DashboardScreen({
       <FilterBar filterOptions={filterOptions} query={query} />
 
       <section className="dashboard-main-grid">
-        <FleetTable query={query} runners={data.runners} />
+        <FleetTable query={query} runnerGroups={data.runnerGroups} runners={data.runners} />
         <SessionList query={query} sessions={data.sessions} />
       </section>
 

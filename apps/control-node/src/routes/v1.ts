@@ -1,11 +1,16 @@
 import type { Prisma } from "@prisma/client";
 import {
   agentTypes,
+  analyticsBreakdownResponseSchema,
   eventCategories,
+  eventTimeseriesResponseSchema,
   eventListQuerySchema,
   heartbeatRequestSchema,
+  runnerActivityResponseSchema,
   runnerEnrollmentRequestSchema,
+  runnerGroupListQuerySchema,
   runnerListQuerySchema,
+  runnerTokenRevocationResponseSchema,
   sessionDetailSchema,
   sessionListQuerySchema,
   sessionStatuses,
@@ -15,8 +20,9 @@ import {
 } from "@agentharbor/shared";
 import { z } from "zod";
 import { env } from "../env.js";
-import { authenticateRunner, issueRunnerToken } from "../lib/auth.js";
+import { authenticateAdminRequest, authenticateRunner, issueRunnerToken } from "../lib/auth.js";
 import { prisma } from "../lib/prisma.js";
+import { formatServerSentEvent, publishStreamEvent, subscribeStream } from "../lib/stream.js";
 
 const parseTimestamp = (value: string) => new Date(value);
 
@@ -52,6 +58,131 @@ const normalizeRunnerStatus = (runner: { status: string; lastSeenAt: Date | null
 
 const includesSearch = (value: string | null | undefined, search: string) =>
   Boolean(value?.toLowerCase().includes(search.toLowerCase()));
+
+const analyticsWindowMs = 24 * 60 * 60 * 1000;
+const eventTimeseriesBucketMs = 5 * 60 * 1000;
+const runnerActivityLimit = 10;
+const failureAnalyticsCategories = new Set<(typeof eventCategories)[number]>(["build", "test", "auth", "network", "failure"]);
+
+const analyticsSince = () => new Date(Date.now() - analyticsWindowMs);
+
+const runnerListInclude = {
+  machine: true,
+  _count: {
+    select: {
+      sessions: {
+        where: {
+          status: "running",
+        },
+      },
+    },
+  },
+} satisfies Prisma.RunnerInclude;
+
+const buildRunnerListWhere = (query: {
+  runnerId?: string;
+  status?: string;
+  label?: string;
+  search?: string;
+}) => {
+  const onlineSince = new Date(Date.now() - env.runnerOnlineWindowMs);
+  const notOnlineWhere: Prisma.RunnerWhereInput = {
+    OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: onlineSince } }],
+  };
+  const runnerFilters: Prisma.RunnerWhereInput[] = [];
+
+  if (query.status === "online") {
+    runnerFilters.push({ lastSeenAt: { gte: onlineSince } });
+  }
+
+  if (query.status === "enrolled") {
+    runnerFilters.push({
+      ...notOnlineWhere,
+      status: "enrolled",
+    });
+  }
+
+  if (query.status === "offline") {
+    runnerFilters.push({
+      ...notOnlineWhere,
+      status: { not: "enrolled" },
+    });
+  }
+
+  return {
+    ...(query.runnerId ? { id: query.runnerId } : {}),
+    ...(query.label ? { labels: { has: query.label } } : {}),
+    ...(runnerFilters.length > 0 ? { AND: runnerFilters } : {}),
+  } satisfies Prisma.RunnerWhereInput;
+};
+
+const sortGroupedRunners = (runners: ReturnType<typeof serializeRunner>[]) =>
+  [...runners].sort((left, right) => {
+    if (left.status !== right.status) {
+      return left.status === "online" ? -1 : right.status === "online" ? 1 : left.status.localeCompare(right.status);
+    }
+
+    if (left.activeSessionCount !== right.activeSessionCount) {
+      return right.activeSessionCount - left.activeSessionCount;
+    }
+
+    return left.name.localeCompare(right.name);
+  });
+
+const groupRunnersByLabel = (
+  runners: ReturnType<typeof serializeRunner>[],
+  selectedLabel?: string,
+) => {
+  const groups = new Map<
+    string,
+    {
+      label: string;
+      runnerCount: number;
+      onlineCount: number;
+      activeSessionCount: number;
+      runners: ReturnType<typeof serializeRunner>[];
+    }
+  >();
+
+  for (const runner of runners) {
+    const labels = selectedLabel ? [selectedLabel] : runner.labels.length > 0 ? runner.labels : ["unlabeled"];
+
+    for (const label of labels) {
+      const current =
+        groups.get(label) ??
+        {
+          label,
+          runnerCount: 0,
+          onlineCount: 0,
+          activeSessionCount: 0,
+          runners: [],
+        };
+
+      current.runnerCount += 1;
+      current.onlineCount += runner.isOnline ? 1 : 0;
+      current.activeSessionCount += runner.activeSessionCount;
+      current.runners.push(runner);
+      groups.set(label, current);
+    }
+  }
+
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      runners: sortGroupedRunners(group.runners),
+    }))
+    .sort((left, right) => {
+      if (left.runnerCount !== right.runnerCount) {
+        return right.runnerCount - left.runnerCount;
+      }
+
+      if (left.onlineCount !== right.onlineCount) {
+        return right.onlineCount - left.onlineCount;
+      }
+
+      return left.label.localeCompare(right.label);
+    });
+};
 
 const legacyTelemetryEventPayloadSchema = z
   .object({
@@ -165,6 +296,22 @@ const serializeRunner = (runner: RunnerListRecord) => ({
   activeSessionCount: runner._count.sessions,
 });
 
+const matchesRunnerSearch = (runner: ReturnType<typeof serializeRunner>, search: string | undefined) => {
+  if (!search) {
+    return true;
+  }
+
+  return (
+    includesSearch(runner.name, search) ||
+    includesSearch(runner.machineName, search) ||
+    includesSearch(runner.hostname, search) ||
+    includesSearch(runner.os, search) ||
+    includesSearch(runner.architecture, search) ||
+    includesSearch(runner.environment, search) ||
+    runner.labels.some((label) => includesSearch(label, search))
+  );
+};
+
 const serializeSession = (session: SessionListRecord) => ({
   id: session.id,
   runnerId: session.runnerId,
@@ -191,6 +338,27 @@ const serializeEvent = (event: EventListRecord) => ({
   payload: normalizeStoredPayload(event.payloadJson, event.createdAt),
   createdAt: event.createdAt.toISOString(),
 });
+
+const listFilteredRunners = async (query: {
+  runnerId?: string;
+  limit?: number;
+  status?: string;
+  label?: string;
+  search?: string;
+}) => {
+  const runners = await prisma.runner.findMany({
+    where: buildRunnerListWhere(query),
+    orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+    ...(query.limit && !query.search ? { take: query.limit } : {}),
+    include: runnerListInclude,
+  });
+
+  const serializedRunners = runners.map((runner) => serializeRunner(runner as RunnerListRecord));
+
+  return serializedRunners
+    .filter((runner) => matchesRunnerSearch(runner, query.search))
+    .slice(0, query.limit ?? serializedRunners.length);
+};
 
 const normalizePositiveInteger = (value: unknown) => {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
@@ -258,6 +426,37 @@ const eventMatchesFilters = (
   }
 
   return true;
+};
+
+const toAnalyticsBreakdown = (counts: Map<string, number>) =>
+  [...counts.entries()]
+    .map(([key, count]) => ({
+      key,
+      label: key,
+      count,
+    }))
+    .sort((left, right) => {
+      if (left.count !== right.count) {
+        return right.count - left.count;
+      }
+
+      return left.key.localeCompare(right.key);
+    });
+
+const isFailureAnalyticsEvent = (
+  eventType: string,
+  payload: ReturnType<typeof normalizeStoredPayload>,
+) =>
+  eventType === "agent.session.failed" ||
+  payload.status === "failed" ||
+  payload.status === "blocked" ||
+  Boolean(payload.category && failureAnalyticsCategories.has(payload.category));
+
+const publishStatsRefresh = (reason: string, data: Record<string, unknown>) => {
+  publishStreamEvent("stats.refresh", {
+    ...data,
+    reason,
+  });
 };
 
 const syncSessionForEvent = async (
@@ -360,6 +559,8 @@ export const registerV1Routes = async (app: any) => {
       },
     });
 
+    publishStatsRefresh("runner.enrolled", { runnerId: runner.id });
+
     return reply.send({
       runner: {
         id: runner.id,
@@ -388,16 +589,17 @@ export const registerV1Routes = async (app: any) => {
     const body = heartbeatRequestSchema.parse(request.body);
     const now = parseTimestamp(body.timestamp);
 
-    await prisma.$transaction(async (tx) => {
-      await tx.runner.update({
+    const { heartbeatEvent, updatedRunner } = await prisma.$transaction(async (tx) => {
+      const updatedRunner = await tx.runner.update({
         where: { id: runner.id },
         data: {
           status: "online",
           lastSeenAt: now,
         },
+        include: runnerListInclude,
       });
 
-      await tx.telemetryEvent.create({
+      const heartbeatEvent = await tx.telemetryEvent.create({
         data: {
           runnerId: runner.id,
           eventType: "runner.heartbeat",
@@ -407,8 +609,24 @@ export const registerV1Routes = async (app: any) => {
           },
           createdAt: now,
         },
+        include: {
+          runner: true,
+          session: true,
+        },
       });
+
+      return { heartbeatEvent, updatedRunner };
     });
+
+    const event = serializeEvent(heartbeatEvent as unknown as EventListRecord);
+    const serializedRunner = serializeRunner(updatedRunner as unknown as RunnerListRecord);
+
+    publishStreamEvent("runner.heartbeat", {
+      event,
+      runner: serializedRunner,
+    });
+    publishStreamEvent("telemetry.created", { event });
+    publishStatsRefresh("runner.heartbeat", { runnerId: runner.id });
 
     return reply.send({ ok: true });
   });
@@ -421,10 +639,13 @@ export const registerV1Routes = async (app: any) => {
 
     const body = telemetryIngestRequestSchema.parse(request.body);
 
-    await prisma.$transaction(async (tx) => {
+    const { telemetryEvents, updatedSessions } = await prisma.$transaction(async (tx) => {
+      const telemetryEvents: EventListRecord[] = [];
+      const updatedSessionIds = new Set<string>();
+
       for (const event of body.events) {
         const session = await syncSessionForEvent(tx, runner.id, event);
-        await tx.telemetryEvent.create({
+        const telemetryEvent = await tx.telemetryEvent.create({
           data: {
             runnerId: runner.id,
             sessionId: session?.id ?? null,
@@ -432,7 +653,17 @@ export const registerV1Routes = async (app: any) => {
             payloadJson: event.payload,
             createdAt: parseTimestamp(event.payload.timestamp),
           },
+          include: {
+            runner: true,
+            session: true,
+          },
         });
+
+        telemetryEvents.push(telemetryEvent as unknown as EventListRecord);
+
+        if (session) {
+          updatedSessionIds.add(session.id);
+        }
       }
 
       await tx.runner.update({
@@ -442,6 +673,47 @@ export const registerV1Routes = async (app: any) => {
           lastSeenAt: new Date(),
         },
       });
+
+      const updatedSessions =
+        updatedSessionIds.size > 0
+          ? await tx.agentSession.findMany({
+              where: {
+                id: {
+                  in: [...updatedSessionIds],
+                },
+              },
+              include: {
+                runner: true,
+                _count: {
+                  select: {
+                    telemetryEvents: true,
+                  },
+                },
+              },
+            })
+          : [];
+
+      return {
+        telemetryEvents,
+        updatedSessions: updatedSessions as unknown as SessionListRecord[],
+      };
+    });
+
+    for (const event of telemetryEvents) {
+      publishStreamEvent("telemetry.created", {
+        event: serializeEvent(event),
+      });
+    }
+
+    for (const session of updatedSessions) {
+      publishStreamEvent("session.updated", {
+        session: serializeSession(session),
+      });
+    }
+
+    publishStatsRefresh("telemetry.ingested", {
+      accepted: body.events.length,
+      runnerId: runner.id,
     });
 
     return reply.send({ accepted: body.events.length });
@@ -449,54 +721,94 @@ export const registerV1Routes = async (app: any) => {
 
   app.get("/v1/runners", async (request: any) => {
     const query = runnerListQuerySchema.parse(request.query);
-    const runners = await prisma.runner.findMany({
-      where: query.label
-        ? {
-            labels: {
-              has: query.label,
-            },
-          }
-        : undefined,
-      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
-      include: {
-        machine: true,
-        _count: {
-          select: {
-            sessions: {
-              where: {
-                status: "running",
-              },
-            },
-          },
-        },
-      },
+    return listFilteredRunners({
+      runnerId: query.runnerId,
+      limit: query.limit ?? 25,
+      status: query.status,
+      label: query.label,
+      search: query.search,
+    });
+  });
+
+  app.get("/v1/runners/groups", async (request: any) => {
+    const query = runnerGroupListQuerySchema.parse(request.query);
+    const runners = await listFilteredRunners({
+      status: query.status,
+      label: query.label,
+      search: query.search,
     });
 
-    const filteredRunners = runners
-      .map((runner) => serializeRunner(runner as RunnerListRecord))
-      .filter((runner) => {
-        const search = query.search;
+    return groupRunnersByLabel(runners, query.label).slice(0, query.limit ?? 12);
+  });
 
-        if (query.status && runner.status !== query.status) {
-          return false;
-        }
+  app.post("/v1/runners/:id/revoke-tokens", async (request: any, reply: any) => {
+    const adminAuth = authenticateAdminRequest(request.headers.authorization);
+    if (adminAuth === "unconfigured") {
+      return reply.code(503).send({ error: "Control node admin token is not configured" });
+    }
 
-        if (search) {
-          return (
-            includesSearch(runner.name, search) ||
-            includesSearch(runner.machineName, search) ||
-            includesSearch(runner.hostname, search) ||
-            includesSearch(runner.os, search) ||
-            includesSearch(runner.architecture, search) ||
-            includesSearch(runner.environment, search) ||
-            runner.labels.some((label) => includesSearch(label, search))
-          );
-        }
+    if (adminAuth !== "ok") {
+      return reply.code(401).send({ error: "Unauthorized" });
+    }
 
-        return true;
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const revokedAt = new Date();
+    const result = await prisma.$transaction(async (tx) => {
+      const runner = await tx.runner.findUnique({
+        where: { id: params.id },
+        select: { id: true },
       });
 
-    return filteredRunners.slice(0, query.limit ?? 25);
+      if (!runner) {
+        return null;
+      }
+
+      const update = await tx.runnerToken.updateMany({
+        where: {
+          runnerId: runner.id,
+          revokedAt: null,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: revokedAt } }],
+        },
+        data: { revokedAt },
+      });
+
+      return {
+        runnerId: runner.id,
+        revokedCount: update.count,
+        revokedAt: revokedAt.toISOString(),
+      };
+    });
+
+    if (!result) {
+      return reply.code(404).send({ error: "Runner not found" });
+    }
+
+    return runnerTokenRevocationResponseSchema.parse(result);
+  });
+
+  app.get("/v1/stream/events", async (request: any, reply: any) => {
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    reply.raw.write("retry: 3000\n\n");
+
+    const unsubscribe = subscribeStream((event) => {
+      reply.raw.write(formatServerSentEvent(event));
+    });
+
+    const keepAlive = setInterval(() => {
+      reply.raw.write(": keep-alive\n\n");
+    }, 25_000);
+    keepAlive.unref?.();
+
+    request.raw.on("close", () => {
+      clearInterval(keepAlive);
+      unsubscribe();
+    });
   });
 
   app.get("/v1/sessions", async (request: any) => {
@@ -505,6 +817,7 @@ export const registerV1Routes = async (app: any) => {
       ...(query.status ? { status: query.status } : {}),
       ...(query.agentType ? { agentType: query.agentType } : {}),
       ...(query.runnerId ? { runnerId: query.runnerId } : {}),
+      ...(query.label ? { runner: { is: { labels: { has: query.label } } } } : {}),
       ...(query.since ? { startedAt: { gte: new Date(query.since) } } : {}),
       ...(query.search
         ? {
@@ -588,6 +901,7 @@ export const registerV1Routes = async (app: any) => {
       ...(query.eventType ? { eventType: query.eventType } : {}),
       ...(query.runnerId ? { runnerId: query.runnerId } : {}),
       ...(query.sessionId ? { sessionId: query.sessionId } : {}),
+      ...(query.label ? { runner: { is: { labels: { has: query.label } } } } : {}),
       ...(query.since ? { createdAt: { gte: new Date(query.since) } } : {}),
     };
     const filteredEvents: Array<ReturnType<typeof serializeEvent>> = [];
@@ -624,8 +938,129 @@ export const registerV1Routes = async (app: any) => {
     return filteredEvents.slice(0, limit);
   });
 
+  app.get("/v1/analytics/agent-types", async () => {
+    const groups = await prisma.agentSession.groupBy({
+      by: ["agentType"],
+      where: {
+        startedAt: {
+          gte: analyticsSince(),
+        },
+      },
+      _count: {
+        agentType: true,
+      },
+    });
+
+    const counts = new Map(groups.map((group) => [group.agentType, group._count.agentType]));
+    return analyticsBreakdownResponseSchema.parse({
+      items: toAnalyticsBreakdown(counts),
+    });
+  });
+
+  app.get("/v1/analytics/failures", async () => {
+    const events = await prisma.telemetryEvent.findMany({
+      where: {
+        createdAt: {
+          gte: analyticsSince(),
+        },
+      },
+      select: {
+        eventType: true,
+        payloadJson: true,
+        createdAt: true,
+      },
+    });
+    const counts = new Map<string, number>();
+
+    for (const event of events) {
+      const payload = normalizeStoredPayload(event.payloadJson, event.createdAt);
+
+      if (!isFailureAnalyticsEvent(event.eventType, payload)) {
+        continue;
+      }
+
+      const key = payload.category ?? "unknown";
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+
+    return analyticsBreakdownResponseSchema.parse({
+      items: toAnalyticsBreakdown(counts),
+    });
+  });
+
+  app.get("/v1/analytics/runners/activity", async () => {
+    const groups = await prisma.agentSession.groupBy({
+      by: ["runnerId"],
+      where: {
+        startedAt: {
+          gte: analyticsSince(),
+        },
+      },
+      _count: {
+        runnerId: true,
+      },
+    });
+    const runners = await prisma.runner.findMany({
+      where: {
+        id: {
+          in: groups.map((group) => group.runnerId),
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+    const runnerNames = new Map(runners.map((runner) => [runner.id, runner.name]));
+
+    return runnerActivityResponseSchema.parse({
+      items: groups
+        .map((group) => ({
+          runnerId: group.runnerId,
+          runnerName: runnerNames.get(group.runnerId) ?? group.runnerId,
+          sessionCount: group._count.runnerId,
+        }))
+        .sort((left, right) => {
+          if (left.sessionCount !== right.sessionCount) {
+            return right.sessionCount - left.sessionCount;
+          }
+
+          return left.runnerName.localeCompare(right.runnerName);
+        })
+        .slice(0, runnerActivityLimit),
+    });
+  });
+
+  app.get("/v1/analytics/events/timeseries", async () => {
+    const events = await prisma.telemetryEvent.findMany({
+      where: {
+        createdAt: {
+          gte: analyticsSince(),
+        },
+      },
+      select: {
+        createdAt: true,
+      },
+    });
+    const counts = new Map<number, number>();
+
+    for (const event of events) {
+      const bucketStart = Math.floor(event.createdAt.getTime() / eventTimeseriesBucketMs) * eventTimeseriesBucketMs;
+      counts.set(bucketStart, (counts.get(bucketStart) ?? 0) + 1);
+    }
+
+    return eventTimeseriesResponseSchema.parse({
+      points: [...counts.entries()]
+        .map(([bucketStart, count]) => ({
+          bucketStart: new Date(bucketStart).toISOString(),
+          count,
+        }))
+        .sort((left, right) => left.bucketStart.localeCompare(right.bucketStart)),
+    });
+  });
+
   app.get("/v1/stats", async () => {
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const since = analyticsSince();
 
     const [totalRunners, activeSessions, sessionsLast24h, eventsLast24h, failedSessionsLast24h, runners] = await Promise.all([
       prisma.runner.count(),

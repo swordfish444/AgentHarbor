@@ -1,5 +1,5 @@
 import type { EventListItem } from "@agentharbor/shared";
-import { formatDateTime, humanizeEventType } from "../lib/formatters";
+import { formatDateTime, humanizeCategory, humanizeEventType } from "../lib/formatters";
 
 const toneForEvent = (event: EventListItem) => {
   if (event.eventType === "agent.session.failed" || event.payload.status === "failed") {
@@ -46,7 +46,7 @@ export function SessionTimeline({ events }: { events: EventListItem[] }) {
                 </div>
                 <p>{event.payload.summary ?? "No summary attached to this event."}</p>
                 <div className="list-meta">
-                  <span>{event.payload.category ?? "uncategorized"}</span>
+                  <span>{humanizeCategory(event.payload.category)}</span>
                   <span>{event.payload.status ?? "n/a"}</span>
                   <span>{event.payload.tokenUsage ?? 0} tokens</span>
                   <span>{event.payload.filesTouchedCount ?? 0} files</span>

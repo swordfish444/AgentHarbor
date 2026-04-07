@@ -90,6 +90,7 @@ The first demo slice will actively emit:
 Supported query params:
 
 - `limit`
+- `runnerId`
 - `status`
 - `label`
 - `search`
@@ -111,6 +112,33 @@ Response fields the frontend can rely on:
 - `isOnline`
 - `activeSessionCount`
 
+### `GET /v1/runners/groups`
+
+Supported query params:
+
+- `limit`
+- `label`
+- `search`
+
+Response fields the frontend can rely on:
+
+- `label`
+- `runnerCount`
+- `onlineCount`
+- `activeSessionCount`
+- `runners`
+
+### `POST /v1/runners/:id/revoke-tokens`
+
+Revokes all active tokens for a runner. Future heartbeat and telemetry requests using those tokens return `401`.
+Requires `Authorization: Bearer <CONTROL_NODE_ADMIN_TOKEN>`.
+
+Response:
+
+- `runnerId`
+- `revokedCount`
+- `revokedAt`
+
 ### `GET /v1/sessions`
 
 Supported query params:
@@ -119,6 +147,7 @@ Supported query params:
 - `status`
 - `agentType`
 - `runnerId`
+- `label`
 - `since`
 - `search`
 
@@ -147,6 +176,7 @@ Supported query params:
 - `agentType`
 - `runnerId`
 - `sessionId`
+- `label`
 - `since`
 - `search`
 
@@ -160,6 +190,52 @@ Response fields the frontend can rely on:
 - `eventType`
 - `payload`
 - `createdAt`
+
+### `GET /v1/stream/events`
+
+Opens a Server-Sent Events stream for dashboard live refreshes.
+
+Stream events the frontend can rely on:
+
+- `runner.heartbeat`
+- `telemetry.created`
+- `session.updated`
+- `stats.refresh`
+
+Each SSE message uses the event name above and a JSON `data` payload with:
+
+- `id`
+- `type`
+- `emittedAt`
+- `data`
+
+### Analytics Endpoints
+
+All analytics endpoints are global 24-hour aggregates.
+
+`GET /v1/analytics/agent-types`
+
+Response:
+
+- `items`: `{ key, label, count }[]`
+
+`GET /v1/analytics/failures`
+
+Response:
+
+- `items`: `{ key, label, count }[]`
+
+`GET /v1/analytics/runners/activity`
+
+Response:
+
+- `items`: `{ runnerId, runnerName, sessionCount }[]`
+
+`GET /v1/analytics/events/timeseries`
+
+Response:
+
+- `points`: `{ bucketStart, count }[]`
 
 ## Example Filter Queries
 
@@ -187,6 +263,24 @@ Online demo runners:
 curl -k "https://localhost:8443/v1/runners?status=online&label=demo"
 ```
 
+Live dashboard stream:
+
+```bash
+curl -k -N "https://localhost:8443/v1/stream/events"
+```
+
+Agent type analytics:
+
+```bash
+curl -k "https://localhost:8443/v1/analytics/agent-types"
+```
+
+Five-minute event volume:
+
+```bash
+curl -k "https://localhost:8443/v1/analytics/events/timeseries"
+```
+
 ## Frontend Assumptions
 
 The frontend can assume:
@@ -195,4 +289,8 @@ The frontend can assume:
 - completed sessions will carry `status: "completed"`
 - failure scenarios use structured categories instead of free-form strings
 - demo runners will carry the `demo` label and `environment: "demo"`
+- demo grouping labels will include stable values like `backend`, `student-team-a`, `student-team-b`, and the host platform label while still retaining the scenario and agent-type labels used by the existing demo filters
+- runner label groups can be rendered directly from `GET /v1/runners/groups`
 - multi-runner traffic can be generated from one command without manual event entry
+- the dashboard can subscribe to `GET /v1/stream/events` once and refresh snapshots when stream events arrive
+- analytics endpoints are global 24-hour aggregates until dashboard filter-aware analytics are explicitly added

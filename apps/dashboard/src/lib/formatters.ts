@@ -74,3 +74,11 @@ export const humanizeEventType = (eventType: string) =>
     .split(".")
     .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
     .join(" / ");
+
+export const humanizeCategory = (category: string | null | undefined, fallback = "Uncategorized") =>
+  category
+    ? category
+        .split("-")
+        .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+        .join(" ")
+    : fallback;

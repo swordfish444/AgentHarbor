@@ -1,10 +1,18 @@
 import Link from "next/link";
-import type { RunnerListItem } from "@agentharbor/shared";
+import type { RunnerLabelGroup, RunnerListItem } from "@agentharbor/shared";
 import { formatDateTime } from "../lib/formatters";
 import { hasActiveDashboardFilters, type DashboardQuery } from "../lib/dashboard-query";
 import { StatusPill } from "./status-pill";
 
-export function FleetTable({ runners, query }: { runners: RunnerListItem[]; query: DashboardQuery }) {
+export function FleetTable({
+  runners,
+  query,
+  runnerGroups,
+}: {
+  runners: RunnerListItem[];
+  query: DashboardQuery;
+  runnerGroups: RunnerLabelGroup[];
+}) {
   const filtered = hasActiveDashboardFilters(query);
 
   return (
@@ -16,6 +24,34 @@ export function FleetTable({ runners, query }: { runners: RunnerListItem[]; quer
         </div>
         <span className="subtle-badge">{runners.length} visible</span>
       </div>
+
+      {runnerGroups.length > 0 ? (
+        <div className="runner-group-grid">
+          {runnerGroups.map((group) => (
+            <section className="runner-group-card" key={group.label}>
+              <div className="runner-group-header">
+                <div>
+                  <p className="eyebrow">Label Group</p>
+                  <h3>{group.label}</h3>
+                </div>
+                <span className="subtle-badge">{group.runnerCount} runners</span>
+              </div>
+              <div className="runner-group-metrics">
+                <span>{group.onlineCount} online</span>
+                <span>{group.activeSessionCount} active sessions</span>
+              </div>
+              <div className="tag-list">
+                {group.runners.slice(0, 4).map((runner) => (
+                  <span className="tag" key={`${group.label}-${runner.id}`}>
+                    {runner.name}
+                  </span>
+                ))}
+                {group.runners.length > 4 ? <span className="tag">+{group.runners.length - 4} more</span> : null}
+              </div>
+            </section>
+          ))}
+        </div>
+      ) : null}
 
       {runners.length === 0 ? (
         <div className="empty-state">

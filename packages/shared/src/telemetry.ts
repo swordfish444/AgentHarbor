@@ -12,6 +12,9 @@ export const eventCategories = [
   "network",
   "auth",
   "failure",
+  "timeout",
+  "human-approval",
+  "unknown",
   "recovery",
 ] as const;
 export type EventCategory = (typeof eventCategories)[number];
@@ -80,6 +83,13 @@ export const runnerEnrollmentResponseSchema = z.object({
 });
 export type RunnerEnrollmentResponse = z.infer<typeof runnerEnrollmentResponseSchema>;
 
+export const runnerTokenRevocationResponseSchema = z.object({
+  runnerId: z.string(),
+  revokedCount: z.number().int().nonnegative(),
+  revokedAt: z.string().datetime(),
+});
+export type RunnerTokenRevocationResponse = z.infer<typeof runnerTokenRevocationResponseSchema>;
+
 export const telemetryEventPayloadSchema = z.object({
   timestamp: z.string().datetime(),
   agentType: z.enum(agentTypes),
@@ -122,19 +132,61 @@ export const statsResponseSchema = z.object({
 });
 export type StatsResponse = z.infer<typeof statsResponseSchema>;
 
+export const analyticsBreakdownResponseSchema = z.object({
+  items: z.array(
+    z.object({
+      key: z.string(),
+      label: z.string(),
+      count: z.number().int().nonnegative(),
+    }),
+  ),
+});
+export type AnalyticsBreakdownResponse = z.infer<typeof analyticsBreakdownResponseSchema>;
+
+export const runnerActivityResponseSchema = z.object({
+  items: z.array(
+    z.object({
+      runnerId: z.string(),
+      runnerName: z.string(),
+      sessionCount: z.number().int().nonnegative(),
+    }),
+  ),
+});
+export type RunnerActivityResponse = z.infer<typeof runnerActivityResponseSchema>;
+
+export const eventTimeseriesResponseSchema = z.object({
+  points: z.array(
+    z.object({
+      bucketStart: z.string().datetime(),
+      count: z.number().int().nonnegative(),
+    }),
+  ),
+});
+export type EventTimeseriesResponse = z.infer<typeof eventTimeseriesResponseSchema>;
+
 export const runnerListQuerySchema = z.object({
   limit: limitQuerySchema,
+  runnerId: optionalQueryStringSchema,
   status: z.enum(runnerStatuses).optional(),
   label: runnerLabelSchema.optional(),
   search: optionalQueryStringSchema,
 });
 export type RunnerListQuery = z.infer<typeof runnerListQuerySchema>;
 
+export const runnerGroupListQuerySchema = z.object({
+  limit: limitQuerySchema,
+  status: z.enum(runnerStatuses).optional(),
+  label: runnerLabelSchema.optional(),
+  search: optionalQueryStringSchema,
+});
+export type RunnerGroupListQuery = z.infer<typeof runnerGroupListQuerySchema>;
+
 export const sessionListQuerySchema = z.object({
   limit: limitQuerySchema,
   status: z.enum(sessionStatuses).optional(),
   agentType: z.enum(agentTypes).optional(),
   runnerId: optionalQueryStringSchema,
+  label: runnerLabelSchema.optional(),
   since: optionalDateTimeQuerySchema,
   search: optionalQueryStringSchema,
 });
@@ -146,6 +198,7 @@ export const eventListQuerySchema = z.object({
   agentType: z.enum(agentTypes).optional(),
   runnerId: optionalQueryStringSchema,
   sessionId: optionalQueryStringSchema,
+  label: runnerLabelSchema.optional(),
   since: optionalDateTimeQuerySchema,
   search: optionalQueryStringSchema,
 });
@@ -168,6 +221,15 @@ export const runnerListItemSchema = z.object({
   activeSessionCount: z.number().int().nonnegative(),
 });
 export type RunnerListItem = z.infer<typeof runnerListItemSchema>;
+
+export const runnerLabelGroupSchema = z.object({
+  label: runnerLabelSchema,
+  runnerCount: z.number().int().nonnegative(),
+  onlineCount: z.number().int().nonnegative(),
+  activeSessionCount: z.number().int().nonnegative(),
+  runners: z.array(runnerListItemSchema),
+});
+export type RunnerLabelGroup = z.infer<typeof runnerLabelGroupSchema>;
 
 export const sessionListItemSchema = z.object({
   id: z.string(),
@@ -197,6 +259,17 @@ export const eventListItemSchema = z.object({
   createdAt: z.string(),
 });
 export type EventListItem = z.infer<typeof eventListItemSchema>;
+
+export const streamEventTypes = ["runner.heartbeat", "telemetry.created", "session.updated", "stats.refresh"] as const;
+export type StreamEventType = (typeof streamEventTypes)[number];
+
+export const streamEventSchema = z.object({
+  id: z.string(),
+  type: z.enum(streamEventTypes),
+  emittedAt: z.string().datetime(),
+  data: z.unknown(),
+});
+export type StreamEvent = z.infer<typeof streamEventSchema>;
 
 export const sessionDetailSchema = sessionListItemSchema.extend({
   events: z.array(eventListItemSchema),

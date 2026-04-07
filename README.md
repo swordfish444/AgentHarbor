@@ -67,6 +67,7 @@ DATABASE_URL=postgresql://agentharbor:agentharbor@localhost:5432/agentharbor \
 CONTROL_NODE_PORT=8443 \
 CONTROL_NODE_TLS_ENABLED=true \
 CONTROL_NODE_TLS_ALLOW_SELF_SIGNED=true \
+CONTROL_NODE_ADMIN_TOKEN=dev-control-admin-token \
 pnpm dev:control
 ```
 
@@ -191,6 +192,7 @@ See [backend-contract.md](./backend-contract.md) for the current backend/fronten
 
 - HTTPS transport on the control node.
 - Token-based runner auth with SHA-256 hashed token storage.
+- Admin bearer token support for destructive control-plane routes such as runner token revocation.
 - Minimal structured telemetry by default. Raw prompt text is not captured.
 - Self-signed TLS support for local development; bring your own certificate/key for shared environments.
 

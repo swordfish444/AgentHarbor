@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { Command } from "commander";
 import { AgentHarborClient } from "@agentharbor/sdk";
 import { type TelemetryEventEnvelope, telemetryEventTypes } from "@agentharbor/shared";
+import { buildDemoRunnerLabels } from "./demo-labels.js";
 
 interface RunnerConfig {
   controlNodeUrl: string;
@@ -21,7 +22,7 @@ interface RunnerConfig {
 
 type DemoScenarioName = "happy-path" | "failure-burst";
 type DemoAgentType = "codex" | "claude-code" | "cursor" | "automation";
-type FailureCategory = "build" | "test" | "network" | "auth" | "failure";
+type FailureCategory = "build" | "test" | "network" | "auth" | "timeout" | "human-approval" | "unknown";
 
 interface DemoRunnerContext {
   runnerId: string;
@@ -36,7 +37,7 @@ const configDirectory = path.join(os.homedir(), ".agentharbor");
 const configPath = path.join(configDirectory, "runner.json");
 const demoScenarioNames = ["happy-path", "failure-burst"] as const;
 const demoAgentTypes = ["codex", "claude-code", "cursor", "automation"] as const;
-const failureCategories = ["build", "test", "network", "auth", "failure"] as const;
+const failureCategories = ["build", "test", "network", "auth", "timeout", "human-approval", "unknown"] as const;
 
 const sleep = (durationMs: number) => new Promise((resolve) => setTimeout(resolve, durationMs));
 
@@ -167,8 +168,12 @@ const failureSummaryFor = (category: FailureCategory) => {
       return "Dependency fetches timed out while preparing the workspace.";
     case "auth":
       return "Authentication to a required service failed during execution.";
+    case "timeout":
+      return "The task exceeded the allowed execution window before the patch could finish.";
+    case "human-approval":
+      return "The runner is blocked waiting for a required human approval before proceeding.";
     default:
-      return "The agent exhausted its retries and could not complete the task.";
+      return "The runner hit an unexpected failure mode and could not classify it more precisely.";
   }
 };
 
@@ -253,7 +258,12 @@ const enrollDemoRunner = async ({
   const runnerName = buildDemoRunnerName(baseRunnerName, agentType, runnerIndex);
   const response = await bootstrapClient.enrollRunner({
     runnerName,
-    labels: ["demo", scenario, agentType],
+    labels: buildDemoRunnerLabels({
+      platform: os.platform(),
+      runnerIndex,
+      scenario,
+      agentType,
+    }),
     environment: "demo",
     machine: {
       hostname: `${machine.hostname}-demo-${runnerIndex + 1}`,
@@ -381,8 +391,8 @@ const runFailureBurstCycle = async (
       buildEvent("agent.summary.updated", {
         agentType: context.agentType,
         sessionKey,
-        summary: "The runner retried twice but could not recover from the failure condition.",
-        category: "failure",
+        summary: `Failure analysis: ${failureSummaryFor(failureCategory)}`,
+        category: failureCategory,
         tokenUsage: 1_240 + cycle * 40,
         filesTouchedCount: 5 + cycle,
         status: "retrying",
@@ -394,8 +404,8 @@ const runFailureBurstCycle = async (
       buildEvent("agent.session.failed", {
         agentType: context.agentType,
         sessionKey,
-        summary: `Session failed after repeated ${failureCategory} issues.`,
-        category: "failure",
+        summary: `Session failed because of repeated ${failureCategory} issues.`,
+        category: failureCategory,
         durationMs: Date.now() - start,
         tokenUsage: 1_450 + cycle * 55,
         filesTouchedCount: 6 + cycle,

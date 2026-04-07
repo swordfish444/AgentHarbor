@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { env } from "../env.js";
 import { prisma } from "./prisma.js";
 
 const TOKEN_PREFIX = "ah_";
@@ -22,6 +23,26 @@ export const getBearerToken = (authorizationHeader: string | undefined): string 
   }
 
   return authorizationHeader.slice("Bearer ".length).trim();
+};
+
+const tokensMatch = (left: string, right: string) => {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+
+  return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+};
+
+export const authenticateAdminRequest = (authorizationHeader: string | undefined) => {
+  if (!env.adminToken) {
+    return "unconfigured" as const;
+  }
+
+  const token = getBearerToken(authorizationHeader);
+  if (!token) {
+    return "unauthorized" as const;
+  }
+
+  return tokensMatch(token, env.adminToken) ? ("ok" as const) : ("unauthorized" as const);
 };
 
 export const authenticateRunner = async (authorizationHeader: string | undefined) => {
