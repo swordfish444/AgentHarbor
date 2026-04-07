@@ -12,6 +12,9 @@ export const eventCategories = [
   "network",
   "auth",
   "failure",
+  "timeout",
+  "human-approval",
+  "unknown",
   "recovery",
 ] as const;
 export type EventCategory = (typeof eventCategories)[number];

@@ -399,18 +399,18 @@ if (!databaseUrl) {
           filesTouchedCount: 2,
         },
       },
-      {
-        eventType: "agent.session.failed",
-        payload: {
-          timestamp: "2026-04-02T20:06:25.000Z",
-          agentType: "codex",
-          sessionKey: "session-failed",
-          summary: "Session failed after repeated build errors.",
-          category: "failure",
-          status: "failed",
-          durationMs: 25_000,
-          tokenUsage: 1_050,
-          filesTouchedCount: 3,
+        {
+          eventType: "agent.session.failed",
+          payload: {
+            timestamp: "2026-04-02T20:06:25.000Z",
+            agentType: "codex",
+            sessionKey: "session-failed",
+            summary: "Session failed because of repeated build issues.",
+            category: "build",
+            status: "failed",
+            durationMs: 25_000,
+            tokenUsage: 1_050,
+            filesTouchedCount: 3,
         },
       },
     ]);
@@ -467,7 +467,7 @@ if (!databaseUrl) {
     }>;
     assert.equal(failedEvents.length, 1);
     assert.equal(failedEvents[0]?.eventType, "agent.session.failed");
-    assert.equal(failedEvents[0]?.payload.category, "failure");
+    assert.equal(failedEvents[0]?.payload.category, "build");
     assert.equal(failedEvents[0]?.payload.status, "failed");
 
     const wrongLabelEventsResponse = await app.inject({
@@ -476,6 +476,86 @@ if (!databaseUrl) {
     });
     assert.equal(wrongLabelEventsResponse.statusCode, 200);
     assert.deepEqual(wrongLabelEventsResponse.json(), []);
+  });
+
+  test("preserves standardized failure categories in session detail so the frontend can explain failures", async () => {
+    const enrollment = await enrollRunner("backend-runner-failure-detail");
+    const token = enrollment.credentials.token;
+
+    await postTelemetry(token, [
+      {
+        eventType: "agent.session.started",
+        payload: {
+          timestamp: "2026-04-02T20:10:00.000Z",
+          agentType: "codex",
+          sessionKey: "session-timeout",
+          summary: "Started a long-running task.",
+          category: "session",
+          status: "running",
+        },
+      },
+      {
+        eventType: "agent.prompt.executed",
+        payload: {
+          timestamp: "2026-04-02T20:10:20.000Z",
+          agentType: "codex",
+          sessionKey: "session-timeout",
+          summary: "Execution exceeded the allotted time budget.",
+          category: "timeout",
+          status: "blocked",
+        },
+      },
+      {
+        eventType: "agent.session.failed",
+        payload: {
+          timestamp: "2026-04-02T20:10:45.000Z",
+          agentType: "codex",
+          sessionKey: "session-timeout",
+          summary: "Session failed because the task timed out waiting for completion.",
+          category: "timeout",
+          status: "failed",
+          durationMs: 45_000,
+        },
+      },
+    ]);
+
+    const sessionsResponse = await app.inject({
+      method: "GET",
+      url: "/v1/sessions?status=failed&search=timed out",
+    });
+
+    assert.equal(sessionsResponse.statusCode, 200);
+    const sessions = sessionsResponse.json() as Array<{
+      id: string;
+      sessionKey: string;
+      summary: string | null;
+    }>;
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0]?.sessionKey, "session-timeout");
+    assert.equal(sessions[0]?.summary, "Session failed because the task timed out waiting for completion.");
+
+    const sessionDetailResponse = await app.inject({
+      method: "GET",
+      url: `/v1/sessions/${sessions[0]?.id}`,
+    });
+
+    assert.equal(sessionDetailResponse.statusCode, 200);
+    const sessionDetail = sessionDetailResponse.json() as {
+      summary: string | null;
+      events: Array<{
+        eventType: string;
+        payload: {
+          category?: string;
+          summary?: string;
+        };
+      }>;
+    };
+
+    assert.equal(sessionDetail.summary, "Session failed because the task timed out waiting for completion.");
+    const failedEvent = sessionDetail.events.find((event) => event.eventType === "agent.session.failed");
+    assert.ok(failedEvent);
+    assert.equal(failedEvent.payload.category, "timeout");
+    assert.equal(failedEvent.payload.summary, "Session failed because the task timed out waiting for completion.");
   });
 
   test("filters sessions by label, since, and limit in the database query", async () => {

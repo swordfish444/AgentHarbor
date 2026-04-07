@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { EventListItem } from "@agentharbor/shared";
 import { hasActiveDashboardFilters, type DashboardQuery } from "../lib/dashboard-query";
-import { formatTime, humanizeEventType } from "../lib/formatters";
+import { formatTime, humanizeCategory, humanizeEventType } from "../lib/formatters";
 import { DashboardLiveRefresh } from "./dashboard-live-refresh";
 
 export function LiveEventFeed({ events, query }: { events: EventListItem[]; query: DashboardQuery }) {
@@ -40,7 +40,7 @@ export function LiveEventFeed({ events, query }: { events: EventListItem[]; quer
                 <div className="list-meta">
                   <span>{event.runnerName}</span>
                   <span>{event.payload.agentType}</span>
-                  <span>{event.payload.category ?? "uncategorized"}</span>
+                  <span>{humanizeCategory(event.payload.category)}</span>
                   {event.sessionKey ? <span>{event.sessionKey}</span> : null}
                 </div>
               </>
