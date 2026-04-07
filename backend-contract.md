@@ -90,6 +90,7 @@ The first demo slice will actively emit:
 Supported query params:
 
 - `limit`
+- `runnerId`
 - `status`
 - `label`
 - `search`
@@ -119,6 +120,7 @@ Supported query params:
 - `status`
 - `agentType`
 - `runnerId`
+- `label`
 - `since`
 - `search`
 
@@ -147,6 +149,7 @@ Supported query params:
 - `agentType`
 - `runnerId`
 - `sessionId`
+- `label`
 - `since`
 - `search`
 

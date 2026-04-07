@@ -449,15 +449,62 @@ export const registerV1Routes = async (app: any) => {
 
   app.get("/v1/runners", async (request: any) => {
     const query = runnerListQuerySchema.parse(request.query);
-    const runners = await prisma.runner.findMany({
-      where: query.label
-        ? {
-            labels: {
-              has: query.label,
+    const onlineSince = new Date(Date.now() - env.runnerOnlineWindowMs);
+    const notOnlineWhere: Prisma.RunnerWhereInput = {
+      OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: onlineSince } }],
+    };
+    const runnerFilters: Prisma.RunnerWhereInput[] = [];
+
+    if (query.status === "online") {
+      runnerFilters.push({ lastSeenAt: { gte: onlineSince } });
+    }
+
+    if (query.status === "enrolled") {
+      runnerFilters.push({
+        ...notOnlineWhere,
+        status: "enrolled",
+      });
+    }
+
+    if (query.status === "offline") {
+      runnerFilters.push({
+        ...notOnlineWhere,
+        status: { not: "enrolled" },
+      });
+    }
+
+    if (query.search) {
+      runnerFilters.push({
+        OR: [
+          { name: { contains: query.search, mode: "insensitive" } },
+          { machineName: { contains: query.search, mode: "insensitive" } },
+          { environment: { contains: query.search, mode: "insensitive" } },
+          { labels: { has: query.search } },
+          {
+            machine: {
+              is: {
+                OR: [
+                  { hostname: { contains: query.search, mode: "insensitive" } },
+                  { os: { contains: query.search, mode: "insensitive" } },
+                  { architecture: { contains: query.search, mode: "insensitive" } },
+                ],
+              },
             },
-          }
-        : undefined,
+          },
+        ],
+      });
+    }
+
+    const where: Prisma.RunnerWhereInput = {
+      ...(query.runnerId ? { id: query.runnerId } : {}),
+      ...(query.label ? { labels: { has: query.label } } : {}),
+      ...(runnerFilters.length > 0 ? { AND: runnerFilters } : {}),
+    };
+
+    const runners = await prisma.runner.findMany({
+      where,
       orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+      take: query.limit ?? 25,
       include: {
         machine: true,
         _count: {
@@ -472,31 +519,7 @@ export const registerV1Routes = async (app: any) => {
       },
     });
 
-    const filteredRunners = runners
-      .map((runner) => serializeRunner(runner as RunnerListRecord))
-      .filter((runner) => {
-        const search = query.search;
-
-        if (query.status && runner.status !== query.status) {
-          return false;
-        }
-
-        if (search) {
-          return (
-            includesSearch(runner.name, search) ||
-            includesSearch(runner.machineName, search) ||
-            includesSearch(runner.hostname, search) ||
-            includesSearch(runner.os, search) ||
-            includesSearch(runner.architecture, search) ||
-            includesSearch(runner.environment, search) ||
-            runner.labels.some((label) => includesSearch(label, search))
-          );
-        }
-
-        return true;
-      });
-
-    return filteredRunners.slice(0, query.limit ?? 25);
+    return runners.map((runner) => serializeRunner(runner as RunnerListRecord));
   });
 
   app.get("/v1/sessions", async (request: any) => {
@@ -505,6 +528,7 @@ export const registerV1Routes = async (app: any) => {
       ...(query.status ? { status: query.status } : {}),
       ...(query.agentType ? { agentType: query.agentType } : {}),
       ...(query.runnerId ? { runnerId: query.runnerId } : {}),
+      ...(query.label ? { runner: { is: { labels: { has: query.label } } } } : {}),
       ...(query.since ? { startedAt: { gte: new Date(query.since) } } : {}),
       ...(query.search
         ? {
@@ -588,6 +612,7 @@ export const registerV1Routes = async (app: any) => {
       ...(query.eventType ? { eventType: query.eventType } : {}),
       ...(query.runnerId ? { runnerId: query.runnerId } : {}),
       ...(query.sessionId ? { sessionId: query.sessionId } : {}),
+      ...(query.label ? { runner: { is: { labels: { has: query.label } } } } : {}),
       ...(query.since ? { createdAt: { gte: new Date(query.since) } } : {}),
     };
     const filteredEvents: Array<ReturnType<typeof serializeEvent>> = [];
