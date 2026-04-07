@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { EventListItem } from "@agentharbor/shared";
 import { hasActiveDashboardFilters, type DashboardQuery } from "../lib/dashboard-query";
 import { formatTime, humanizeEventType } from "../lib/formatters";
+import { DashboardLiveRefresh } from "./dashboard-live-refresh";
 
 export function LiveEventFeed({ events, query }: { events: EventListItem[]; query: DashboardQuery }) {
   const filtered = hasActiveDashboardFilters(query);
@@ -13,7 +14,7 @@ export function LiveEventFeed({ events, query }: { events: EventListItem[]; quer
           <p className="eyebrow">Telemetry</p>
           <h2>Recent event stream</h2>
         </div>
-        <span className="subtle-badge">Snapshot mode</span>
+        <DashboardLiveRefresh />
       </div>
 
       {events.length === 0 ? (
@@ -21,8 +22,8 @@ export function LiveEventFeed({ events, query }: { events: EventListItem[]; quer
           <strong>{filtered ? "No telemetry matches the current filters." : "No telemetry events yet."}</strong>
           <p>
             {filtered
-              ? "The event feed honors the session, runner, label, and search filters from the URL."
-              : "Phase 3 will make this panel live, but the filtered server snapshot is already wired in."}
+              ? "No events have arrived for this filter set."
+              : "Waiting for telemetry from enrolled runners."}
           </p>
           {filtered ? <Link href="/">Clear filters</Link> : null}
         </div>

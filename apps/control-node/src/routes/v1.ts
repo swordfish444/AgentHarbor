@@ -18,6 +18,7 @@ import { z } from "zod";
 import { env } from "../env.js";
 import { authenticateRunner, issueRunnerToken } from "../lib/auth.js";
 import { prisma } from "../lib/prisma.js";
+import { formatServerSentEvent, publishStreamEvent, subscribeStream } from "../lib/stream.js";
 
 const parseTimestamp = (value: string) => new Date(value);
 
@@ -53,6 +54,19 @@ const normalizeRunnerStatus = (runner: { status: string; lastSeenAt: Date | null
 
 const includesSearch = (value: string | null | undefined, search: string) =>
   Boolean(value?.toLowerCase().includes(search.toLowerCase()));
+
+const runnerListInclude = {
+  machine: true,
+  _count: {
+    select: {
+      sessions: {
+        where: {
+          status: "running",
+        },
+      },
+    },
+  },
+} satisfies Prisma.RunnerInclude;
 
 const buildRunnerListWhere = (query: {
   runnerId?: string;
@@ -331,18 +345,7 @@ const listFilteredRunners = async (query: {
     where: buildRunnerListWhere(query),
     orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
     ...(query.limit ? { take: query.limit } : {}),
-    include: {
-      machine: true,
-      _count: {
-        select: {
-          sessions: {
-            where: {
-              status: "running",
-            },
-          },
-        },
-      },
-    },
+    include: runnerListInclude,
   });
 
   return runners.map((runner) => serializeRunner(runner as RunnerListRecord));
@@ -414,6 +417,13 @@ const eventMatchesFilters = (
   }
 
   return true;
+};
+
+const publishStatsRefresh = (reason: string, data: Record<string, unknown>) => {
+  publishStreamEvent("stats.refresh", {
+    ...data,
+    reason,
+  });
 };
 
 const syncSessionForEvent = async (
@@ -516,6 +526,8 @@ export const registerV1Routes = async (app: any) => {
       },
     });
 
+    publishStatsRefresh("runner.enrolled", { runnerId: runner.id });
+
     return reply.send({
       runner: {
         id: runner.id,
@@ -544,16 +556,17 @@ export const registerV1Routes = async (app: any) => {
     const body = heartbeatRequestSchema.parse(request.body);
     const now = parseTimestamp(body.timestamp);
 
-    await prisma.$transaction(async (tx) => {
-      await tx.runner.update({
+    const { heartbeatEvent, updatedRunner } = await prisma.$transaction(async (tx) => {
+      const updatedRunner = await tx.runner.update({
         where: { id: runner.id },
         data: {
           status: "online",
           lastSeenAt: now,
         },
+        include: runnerListInclude,
       });
 
-      await tx.telemetryEvent.create({
+      const heartbeatEvent = await tx.telemetryEvent.create({
         data: {
           runnerId: runner.id,
           eventType: "runner.heartbeat",
@@ -563,8 +576,24 @@ export const registerV1Routes = async (app: any) => {
           },
           createdAt: now,
         },
+        include: {
+          runner: true,
+          session: true,
+        },
       });
+
+      return { heartbeatEvent, updatedRunner };
     });
+
+    const event = serializeEvent(heartbeatEvent as unknown as EventListRecord);
+    const serializedRunner = serializeRunner(updatedRunner as unknown as RunnerListRecord);
+
+    publishStreamEvent("runner.heartbeat", {
+      event,
+      runner: serializedRunner,
+    });
+    publishStreamEvent("telemetry.created", { event });
+    publishStatsRefresh("runner.heartbeat", { runnerId: runner.id });
 
     return reply.send({ ok: true });
   });
@@ -577,10 +606,13 @@ export const registerV1Routes = async (app: any) => {
 
     const body = telemetryIngestRequestSchema.parse(request.body);
 
-    await prisma.$transaction(async (tx) => {
+    const { telemetryEvents, updatedSessions } = await prisma.$transaction(async (tx) => {
+      const telemetryEvents: EventListRecord[] = [];
+      const updatedSessionIds = new Set<string>();
+
       for (const event of body.events) {
         const session = await syncSessionForEvent(tx, runner.id, event);
-        await tx.telemetryEvent.create({
+        const telemetryEvent = await tx.telemetryEvent.create({
           data: {
             runnerId: runner.id,
             sessionId: session?.id ?? null,
@@ -588,7 +620,17 @@ export const registerV1Routes = async (app: any) => {
             payloadJson: event.payload,
             createdAt: parseTimestamp(event.payload.timestamp),
           },
+          include: {
+            runner: true,
+            session: true,
+          },
         });
+
+        telemetryEvents.push(telemetryEvent as unknown as EventListRecord);
+
+        if (session) {
+          updatedSessionIds.add(session.id);
+        }
       }
 
       await tx.runner.update({
@@ -598,6 +640,47 @@ export const registerV1Routes = async (app: any) => {
           lastSeenAt: new Date(),
         },
       });
+
+      const updatedSessions =
+        updatedSessionIds.size > 0
+          ? await tx.agentSession.findMany({
+              where: {
+                id: {
+                  in: [...updatedSessionIds],
+                },
+              },
+              include: {
+                runner: true,
+                _count: {
+                  select: {
+                    telemetryEvents: true,
+                  },
+                },
+              },
+            })
+          : [];
+
+      return {
+        telemetryEvents,
+        updatedSessions: updatedSessions as unknown as SessionListRecord[],
+      };
+    });
+
+    for (const event of telemetryEvents) {
+      publishStreamEvent("telemetry.created", {
+        event: serializeEvent(event),
+      });
+    }
+
+    for (const session of updatedSessions) {
+      publishStreamEvent("session.updated", {
+        session: serializeSession(session),
+      });
+    }
+
+    publishStatsRefresh("telemetry.ingested", {
+      accepted: body.events.length,
+      runnerId: runner.id,
     });
 
     return reply.send({ accepted: body.events.length });
@@ -623,6 +706,31 @@ export const registerV1Routes = async (app: any) => {
     });
 
     return groupRunnersByLabel(runners, query.label).slice(0, query.limit ?? 12);
+  });
+
+  app.get("/v1/stream/events", async (request: any, reply: any) => {
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    reply.raw.write("retry: 3000\n\n");
+
+    const unsubscribe = subscribeStream((event) => {
+      reply.raw.write(formatServerSentEvent(event));
+    });
+
+    const keepAlive = setInterval(() => {
+      reply.raw.write(": keep-alive\n\n");
+    }, 25_000);
+    keepAlive.unref?.();
+
+    request.raw.on("close", () => {
+      clearInterval(keepAlive);
+      unsubscribe();
+    });
   });
 
   app.get("/v1/sessions", async (request: any) => {

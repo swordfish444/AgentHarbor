@@ -218,6 +218,17 @@ export const eventListItemSchema = z.object({
 });
 export type EventListItem = z.infer<typeof eventListItemSchema>;
 
+export const streamEventTypes = ["runner.heartbeat", "telemetry.created", "session.updated", "stats.refresh"] as const;
+export type StreamEventType = (typeof streamEventTypes)[number];
+
+export const streamEventSchema = z.object({
+  id: z.string(),
+  type: z.enum(streamEventTypes),
+  emittedAt: z.string().datetime(),
+  data: z.unknown(),
+});
+export type StreamEvent = z.infer<typeof streamEventSchema>;
+
 export const sessionDetailSchema = sessionListItemSchema.extend({
   events: z.array(eventListItemSchema),
 });

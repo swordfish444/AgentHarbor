@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { after, beforeEach, test } from "node:test";
+import { TextDecoder } from "node:util";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -12,6 +13,7 @@ if (!databaseUrl) {
 
   const [{ buildServer }, { prisma }] = await Promise.all([import("../server.js"), import("../lib/prisma.js")]);
   let app = await buildServer();
+  let listenUrl: string | null = null;
 
   const baseMachine = {
     hostname: "integration-demo-host",
@@ -68,6 +70,49 @@ if (!databaseUrl) {
   };
 
   const heartbeatTimestamp = () => new Date().toISOString();
+
+  type StreamReader = {
+    read: () => Promise<{
+      done: boolean;
+      value?: Uint8Array;
+    }>;
+  };
+
+  const getListenUrl = async () => {
+    listenUrl ??= await app.listen({ host: "127.0.0.1", port: 0 });
+    return listenUrl;
+  };
+
+  const readStreamUntil = async (reader: StreamReader, pattern: string, timeoutMs = 3_000) => {
+    const decoder = new TextDecoder();
+    let output = "";
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      await Promise.race([
+        (async () => {
+          while (!output.includes(pattern)) {
+            const { done, value } = await reader.read();
+
+            if (done) {
+              throw new Error(`Stream ended before ${pattern}; received: ${output}`);
+            }
+
+            output += decoder.decode(value, { stream: true });
+          }
+        })(),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error(`Timed out waiting for ${pattern}; received: ${output}`)), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    }
+
+    return output;
+  };
 
   beforeEach(async () => {
     await prisma.telemetryEvent.deleteMany();
@@ -562,6 +607,65 @@ if (!databaseUrl) {
     assert.equal(events[0]?.sessionId, targetSession.id);
     assert.equal(events[0]?.eventType, "agent.prompt.executed");
     assert.equal(events[0]?.payload.summary, "Target new event inside the since window.");
+  });
+
+  test("streams heartbeat and telemetry commits over server-sent events", async () => {
+    const enrollment = await enrollRunner("backend-runner-stream");
+    const response = await fetch(`${await getListenUrl()}/v1/stream/events`);
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type") ?? "", /^text\/event-stream/);
+    assert.ok(response.body);
+
+    const reader = response.body.getReader();
+
+    try {
+      const heartbeatChunkPromise = readStreamUntil(reader, "event: stats.refresh");
+      const heartbeatResponse = await app.inject({
+        method: "POST",
+        url: "/v1/heartbeat",
+        headers: {
+          authorization: `Bearer ${enrollment.credentials.token}`,
+        },
+        payload: {
+          timestamp: heartbeatTimestamp(),
+          activeSessionCount: 0,
+          metadata: {
+            mode: "stream-test",
+          },
+        },
+      });
+
+      assert.equal(heartbeatResponse.statusCode, 200);
+
+      const heartbeatChunk = await heartbeatChunkPromise;
+      assert.match(heartbeatChunk, /event: runner\.heartbeat/);
+      assert.match(heartbeatChunk, /event: telemetry\.created/);
+      assert.match(heartbeatChunk, /event: stats\.refresh/);
+      assert.match(heartbeatChunk, new RegExp(enrollment.runner.id));
+
+      const telemetryChunkPromise = readStreamUntil(reader, "event: session.updated");
+      await postTelemetry(enrollment.credentials.token, [
+        {
+          eventType: "agent.session.started",
+          payload: {
+            timestamp: "2026-04-02T23:00:00.000Z",
+            agentType: "codex",
+            sessionKey: "stream-session",
+            summary: "Streamed session started.",
+            category: "session",
+            status: "running",
+          },
+        },
+      ]);
+
+      const telemetryChunk = await telemetryChunkPromise;
+      assert.match(telemetryChunk, /event: telemetry\.created/);
+      assert.match(telemetryChunk, /event: session\.updated/);
+      assert.match(telemetryChunk, /stream-session/);
+    } finally {
+      await reader.cancel();
+    }
   });
 
   test("accepts legacy stored payload categories when listing events and session detail", async () => {

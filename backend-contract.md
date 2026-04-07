@@ -180,6 +180,24 @@ Response fields the frontend can rely on:
 - `payload`
 - `createdAt`
 
+### `GET /v1/stream/events`
+
+Opens a Server-Sent Events stream for dashboard live refreshes.
+
+Stream events the frontend can rely on:
+
+- `runner.heartbeat`
+- `telemetry.created`
+- `session.updated`
+- `stats.refresh`
+
+Each SSE message uses the event name above and a JSON `data` payload with:
+
+- `id`
+- `type`
+- `emittedAt`
+- `data`
+
 ## Example Filter Queries
 
 Successful sessions:
@@ -206,6 +224,12 @@ Online demo runners:
 curl -k "https://localhost:8443/v1/runners?status=online&label=demo"
 ```
 
+Live dashboard stream:
+
+```bash
+curl -k -N "https://localhost:8443/v1/stream/events"
+```
+
 ## Frontend Assumptions
 
 The frontend can assume:
@@ -217,3 +241,4 @@ The frontend can assume:
 - demo grouping labels will include stable values like `backend`, `student-team-a`, `student-team-b`, and the host platform label
 - runner label groups can be rendered directly from `GET /v1/runners/groups`
 - multi-runner traffic can be generated from one command without manual event entry
+- the dashboard can subscribe to `GET /v1/stream/events` once and refresh snapshots when stream events arrive
