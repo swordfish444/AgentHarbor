@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, beforeEach, test } from "node:test";
 import { TextDecoder } from "node:util";
+import type { Prisma } from "@prisma/client";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -607,6 +608,147 @@ if (!databaseUrl) {
     assert.equal(events[0]?.sessionId, targetSession.id);
     assert.equal(events[0]?.eventType, "agent.prompt.executed");
     assert.equal(events[0]?.payload.summary, "Target new event inside the since window.");
+  });
+
+  test("returns global analytics breakdowns for agent types, failures, and runner activity", async () => {
+    const alphaEnrollment = await enrollRunner("analytics-alpha-runner");
+    const betaEnrollment = await enrollRunner("analytics-beta-runner");
+    const gammaEnrollment = await enrollRunner("analytics-gamma-runner");
+    const recent = new Date();
+    const old = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    const session = (runnerId: string, agentType: string, sessionKey: string, startedAt = recent) => ({
+      runnerId,
+      agentType,
+      sessionKey,
+      status: "completed" as const,
+      startedAt,
+    });
+
+    await prisma.agentSession.createMany({
+      data: [
+        session(alphaEnrollment.runner.id, "codex", "analytics-alpha-codex-1"),
+        session(alphaEnrollment.runner.id, "codex", "analytics-alpha-codex-2"),
+        session(alphaEnrollment.runner.id, "claude-code", "analytics-alpha-claude"),
+        session(betaEnrollment.runner.id, "codex", "analytics-beta-codex"),
+        session(betaEnrollment.runner.id, "claude-code", "analytics-beta-claude"),
+        session(gammaEnrollment.runner.id, "automation", "analytics-gamma-automation"),
+        session(gammaEnrollment.runner.id, "cursor", "analytics-old-cursor", old),
+      ],
+    });
+
+    const failurePayload = (category?: string, status = "blocked") => ({
+      timestamp: recent.toISOString(),
+      agentType: "codex",
+      ...(category ? { category } : {}),
+      status,
+    });
+    const telemetryEvent = (runnerId: string, eventType: string, payloadJson: Prisma.InputJsonValue, createdAt = recent) => ({
+      runnerId,
+      eventType,
+      createdAt,
+      payloadJson,
+    });
+
+    await prisma.telemetryEvent.createMany({
+      data: [
+        telemetryEvent(alphaEnrollment.runner.id, "agent.prompt.executed", failurePayload("build")),
+        telemetryEvent(alphaEnrollment.runner.id, "agent.prompt.executed", failurePayload("test")),
+        telemetryEvent(betaEnrollment.runner.id, "agent.prompt.executed", failurePayload("auth")),
+        telemetryEvent(betaEnrollment.runner.id, "agent.prompt.executed", failurePayload("network")),
+        telemetryEvent(gammaEnrollment.runner.id, "agent.session.failed", failurePayload("failure", "failed")),
+        telemetryEvent(gammaEnrollment.runner.id, "agent.session.failed", failurePayload("legacy-timeout", "failed")),
+        telemetryEvent(gammaEnrollment.runner.id, "agent.session.failed", failurePayload(undefined, "failed")),
+        telemetryEvent(
+          gammaEnrollment.runner.id,
+          "agent.summary.updated",
+          {
+            timestamp: recent.toISOString(),
+            agentType: "codex",
+            category: "implementation",
+            status: "in-progress",
+          },
+        ),
+        telemetryEvent(gammaEnrollment.runner.id, "agent.session.failed", failurePayload("failure", "failed"), old),
+      ],
+    });
+
+    const agentTypesResponse = await app.inject({
+      method: "GET",
+      url: "/v1/analytics/agent-types",
+    });
+    assert.equal(agentTypesResponse.statusCode, 200);
+    const agentTypes = agentTypesResponse.json() as { items: Array<{ key: string; label: string; count: number }> };
+    assert.deepEqual(agentTypes.items, [
+      { key: "codex", label: "codex", count: 3 },
+      { key: "claude-code", label: "claude-code", count: 2 },
+      { key: "automation", label: "automation", count: 1 },
+    ]);
+
+    const failuresResponse = await app.inject({
+      method: "GET",
+      url: "/v1/analytics/failures",
+    });
+    assert.equal(failuresResponse.statusCode, 200);
+    const failures = failuresResponse.json() as { items: Array<{ key: string; label: string; count: number }> };
+    assert.deepEqual(failures.items, [
+      { key: "unknown", label: "unknown", count: 2 },
+      { key: "auth", label: "auth", count: 1 },
+      { key: "build", label: "build", count: 1 },
+      { key: "failure", label: "failure", count: 1 },
+      { key: "network", label: "network", count: 1 },
+      { key: "test", label: "test", count: 1 },
+    ]);
+
+    const runnerActivityResponse = await app.inject({
+      method: "GET",
+      url: "/v1/analytics/runners/activity",
+    });
+    assert.equal(runnerActivityResponse.statusCode, 200);
+    const runnerActivity = runnerActivityResponse.json() as {
+      items: Array<{ runnerId: string; runnerName: string; sessionCount: number }>;
+    };
+    assert.deepEqual(runnerActivity.items, [
+      { runnerId: alphaEnrollment.runner.id, runnerName: "analytics-alpha-runner", sessionCount: 3 },
+      { runnerId: betaEnrollment.runner.id, runnerName: "analytics-beta-runner", sessionCount: 2 },
+      { runnerId: gammaEnrollment.runner.id, runnerName: "analytics-gamma-runner", sessionCount: 1 },
+    ]);
+  });
+
+  test("returns global event analytics in five-minute buckets", async () => {
+    const enrollment = await enrollRunner("analytics-timeseries-runner");
+    const bucketMs = 5 * 60 * 1000;
+    const bucketOne = new Date(Math.floor((Date.now() - 10 * 60 * 1000) / bucketMs) * bucketMs);
+    const bucketTwo = new Date(bucketOne.getTime() + bucketMs);
+    const old = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    const telemetryEventAt = (createdAt: Date, eventType = "agent.prompt.executed") => ({
+      runnerId: enrollment.runner.id,
+      eventType,
+      createdAt,
+      payloadJson: {
+        timestamp: createdAt.toISOString(),
+        agentType: "codex",
+      },
+    });
+
+    await prisma.telemetryEvent.createMany({
+      data: [
+        telemetryEventAt(new Date(bucketOne.getTime() + 30_000)),
+        telemetryEventAt(new Date(bucketOne.getTime() + 60_000)),
+        telemetryEventAt(new Date(bucketTwo.getTime() + 30_000), "agent.summary.updated"),
+        telemetryEventAt(old, "agent.summary.updated"),
+      ],
+    });
+
+    const timeseriesResponse = await app.inject({
+      method: "GET",
+      url: "/v1/analytics/events/timeseries",
+    });
+    assert.equal(timeseriesResponse.statusCode, 200);
+    const timeseries = timeseriesResponse.json() as { points: Array<{ bucketStart: string; count: number }> };
+    assert.deepEqual(timeseries.points, [
+      { bucketStart: bucketOne.toISOString(), count: 2 },
+      { bucketStart: bucketTwo.toISOString(), count: 1 },
+    ]);
   });
 
   test("streams heartbeat and telemetry commits over server-sent events", async () => {

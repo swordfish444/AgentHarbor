@@ -122,6 +122,38 @@ export const statsResponseSchema = z.object({
 });
 export type StatsResponse = z.infer<typeof statsResponseSchema>;
 
+export const analyticsBreakdownResponseSchema = z.object({
+  items: z.array(
+    z.object({
+      key: z.string(),
+      label: z.string(),
+      count: z.number().int().nonnegative(),
+    }),
+  ),
+});
+export type AnalyticsBreakdownResponse = z.infer<typeof analyticsBreakdownResponseSchema>;
+
+export const runnerActivityResponseSchema = z.object({
+  items: z.array(
+    z.object({
+      runnerId: z.string(),
+      runnerName: z.string(),
+      sessionCount: z.number().int().nonnegative(),
+    }),
+  ),
+});
+export type RunnerActivityResponse = z.infer<typeof runnerActivityResponseSchema>;
+
+export const eventTimeseriesResponseSchema = z.object({
+  points: z.array(
+    z.object({
+      bucketStart: z.string().datetime(),
+      count: z.number().int().nonnegative(),
+    }),
+  ),
+});
+export type EventTimeseriesResponse = z.infer<typeof eventTimeseriesResponseSchema>;
+
 export const runnerListQuerySchema = z.object({
   limit: limitQuerySchema,
   runnerId: optionalQueryStringSchema,
