@@ -35,6 +35,9 @@ export type RunnerStatus = (typeof runnerStatuses)[number];
 export const sessionStatuses = ["running", "completed", "failed"] as const;
 export type SessionStatus = (typeof sessionStatuses)[number];
 
+export const alertSeverities = ["critical", "warning", "info"] as const;
+export type AlertSeverity = (typeof alertSeverities)[number];
+
 export const runnerLabelSchema = z.string().trim().min(1).max(64);
 export const runnerEnvironmentSchema = z.string().trim().min(1).max(64);
 
@@ -163,6 +166,31 @@ export const eventTimeseriesResponseSchema = z.object({
   ),
 });
 export type EventTimeseriesResponse = z.infer<typeof eventTimeseriesResponseSchema>;
+
+export const alertItemSchema = z.object({
+  id: z.string(),
+  severity: z.enum(alertSeverities),
+  title: z.string(),
+  detail: z.string(),
+  count: z.number().int().nonnegative().optional(),
+  href: z.string().optional(),
+});
+export type AlertItem = z.infer<typeof alertItemSchema>;
+
+export const alertResponseSchema = z.object({
+  items: z.array(alertItemSchema),
+});
+export type AlertResponse = z.infer<typeof alertResponseSchema>;
+
+export const dashboardAggregateQuerySchema = z.object({
+  status: z.enum(sessionStatuses).optional(),
+  agentType: z.enum(agentTypes).optional(),
+  runnerId: optionalQueryStringSchema,
+  label: runnerLabelSchema.optional(),
+  since: optionalDateTimeQuerySchema,
+  search: optionalQueryStringSchema,
+});
+export type DashboardAggregateQuery = z.infer<typeof dashboardAggregateQuerySchema>;
 
 export const runnerListQuerySchema = z.object({
   limit: limitQuerySchema,

@@ -1,8 +1,13 @@
 import { Agent } from "undici";
 import { ensureTrailingSlashlessUrl, parseBoolean } from "@agentharbor/config";
 import {
+  alertResponseSchema,
+  analyticsBreakdownResponseSchema,
+  dashboardAggregateQuerySchema,
   eventListItemSchema,
   eventListQuerySchema,
+  eventTimeseriesResponseSchema,
+  runnerActivityResponseSchema,
   runnerGroupListQuerySchema,
   runnerLabelGroupSchema,
   runnerListItemSchema,
@@ -11,7 +16,11 @@ import {
   sessionListItemSchema,
   sessionListQuerySchema,
   statsResponseSchema,
+  type AlertItem,
+  type AnalyticsBreakdownResponse,
   type EventListItem,
+  type EventTimeseriesResponse,
+  type RunnerActivityResponse,
   type RunnerLabelGroup,
   type RunnerListItem,
   type SessionDetail,
@@ -20,12 +29,35 @@ import {
 } from "@agentharbor/shared";
 import type { DashboardFilterOptions, DashboardQuery } from "./dashboard-query";
 
+export interface DashboardAnalytics {
+  agentTypes: AnalyticsBreakdownResponse;
+  failures: AnalyticsBreakdownResponse;
+  runnerActivity: RunnerActivityResponse;
+  eventTimeseries: EventTimeseriesResponse;
+}
+
 export interface DashboardData {
   stats: StatsResponse;
   runnerGroups: RunnerLabelGroup[];
   runners: RunnerListItem[];
   sessions: SessionListItem[];
   events: EventListItem[];
+  alerts: AlertItem[];
+  analytics: DashboardAnalytics;
+}
+
+export class ControlNodeRequestError extends Error {
+  readonly status: number;
+  readonly path: string;
+  readonly responseBody: string;
+
+  constructor(path: string, status: number, responseBody = "") {
+    super(`Control node request failed for ${path}: ${status}`);
+    this.name = "ControlNodeRequestError";
+    this.path = path;
+    this.status = status;
+    this.responseBody = responseBody;
+  }
 }
 
 const baseUrl = ensureTrailingSlashlessUrl(process.env.AGENTHARBOR_CONTROL_NODE_URL ?? "https://localhost:8443");
@@ -58,17 +90,29 @@ const buildQueryString = (params: Record<string, string | number | undefined>) =
 
 const withQuery = (path: string, params: Record<string, string | number | undefined>) => `${path}${buildQueryString(params)}`;
 
+const buildAggregateQuery = (query: DashboardQuery) =>
+  dashboardAggregateQuerySchema.parse({
+    status: query.status,
+    agentType: query.agentType,
+    runnerId: query.runnerId,
+    label: query.label,
+    since: query.since,
+    search: query.search,
+  });
+
 async function getJson<T>(path: string, schema: { parse: (value: unknown) => T }): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, {
     cache: "no-store",
     dispatcher,
   } as RequestInit & { dispatcher?: Agent });
+  const responseText = await response.text();
 
   if (!response.ok) {
-    throw new Error(`Control node request failed for ${path}: ${response.status}`);
+    throw new ControlNodeRequestError(path, response.status, responseText);
   }
 
-  return schema.parse(await response.json());
+  const payload = responseText === "" ? null : JSON.parse(responseText);
+  return schema.parse(payload);
 }
 
 const buildRunnerFilterOptions = (allRunners: RunnerListItem[]): DashboardFilterOptions => {
@@ -118,6 +162,7 @@ const narrowRunnerGroups = (runnerGroups: RunnerLabelGroup[], runnerId: string |
     })
     .filter((group) => group.runnerCount > 0);
 };
+
 const mergeEvents = (eventGroups: EventListItem[][]) =>
   uniqueById(eventGroups.flat())
     .sort((left, right) => {
@@ -140,10 +185,7 @@ const fetchSessions = async (query: DashboardQuery) => {
   return getJson(withQuery("/v1/sessions", sessionQuery), sessionListItemSchema.array());
 };
 
-const fetchEvents = async (
-  query: DashboardQuery,
-  sessionIdsForStatus: string[] | null,
-) => {
+const fetchEvents = async (query: DashboardQuery, sessionIdsForStatus: string[] | null) => {
   if (sessionIdsForStatus && sessionIdsForStatus.length === 0) {
     return [];
   }
@@ -182,6 +224,29 @@ const fetchEvents = async (
   return getJson(withQuery("/v1/events", eventQuery), eventListItemSchema.array());
 };
 
+const fetchAnalytics = async (query: DashboardQuery): Promise<DashboardAnalytics> => {
+  const aggregateQuery = buildAggregateQuery(query);
+  const [agentTypes, failures, runnerActivity, eventTimeseries] = await Promise.all([
+    getJson(withQuery("/v1/analytics/agent-types", aggregateQuery), analyticsBreakdownResponseSchema),
+    getJson(withQuery("/v1/analytics/failures", aggregateQuery), analyticsBreakdownResponseSchema),
+    getJson(withQuery("/v1/analytics/runners/activity", aggregateQuery), runnerActivityResponseSchema),
+    getJson(withQuery("/v1/analytics/events/timeseries", aggregateQuery), eventTimeseriesResponseSchema),
+  ]);
+
+  return {
+    agentTypes,
+    failures,
+    runnerActivity,
+    eventTimeseries,
+  };
+};
+
+const fetchAlerts = async (query: DashboardQuery) => {
+  const aggregateQuery = buildAggregateQuery(query);
+  const response = await getJson(withQuery("/v1/alerts", aggregateQuery), alertResponseSchema);
+  return response.items;
+};
+
 export const getDashboardData = async (
   query: DashboardQuery,
 ): Promise<{ data: DashboardData; filterOptions: DashboardFilterOptions }> => {
@@ -203,11 +268,15 @@ export const getDashboardData = async (
     limit: dashboardListLimits.filterRunners,
   });
 
-  const [stats, runnerResults, allRunners, runnerGroupResults] = await Promise.all([
-    getJson("/v1/stats", statsResponseSchema),
+  const aggregateQuery = buildAggregateQuery(query);
+
+  const [stats, runnerResults, allRunners, runnerGroupResults, analytics, alerts] = await Promise.all([
+    getJson(withQuery("/v1/stats", aggregateQuery), statsResponseSchema),
     getJson(withQuery("/v1/runners", runnerQuery), runnerListItemSchema.array()),
     getJson(withQuery("/v1/runners", filterOptionQuery), runnerListItemSchema.array()),
     getJson(withQuery("/v1/runners/groups", runnerGroupQuery), runnerLabelGroupSchema.array()),
+    fetchAnalytics(query),
+    fetchAlerts(query),
   ]);
 
   const sessions = await fetchSessions(query);
@@ -222,10 +291,11 @@ export const getDashboardData = async (
       runners: runnerResults,
       sessions,
       events,
+      alerts,
+      analytics,
     },
     filterOptions: buildRunnerFilterOptions(allRunners),
   };
 };
 
-export const getSessionDetail = async (id: string): Promise<SessionDetail> =>
-  getJson(`/v1/sessions/${id}`, sessionDetailSchema);
+export const getSessionDetail = async (id: string): Promise<SessionDetail> => getJson(`/v1/sessions/${id}`, sessionDetailSchema);
