@@ -64,6 +64,7 @@ const includesSearch = (value: string | null | undefined, search: string) =>
 const analyticsWindowMs = 24 * 60 * 60 * 1000;
 const eventTimeseriesBucketMs = 5 * 60 * 1000;
 const runnerActivityLimit = 10;
+const aggregateEventPageSize = 250;
 const failureAnalyticsCategories = new Set<(typeof eventCategories)[number]>(["build", "test", "auth", "network", "failure"]);
 
 const runnerListInclude = {
@@ -305,6 +306,50 @@ type AggregateSessionView = {
   summary: string | null;
 };
 
+type AggregateEventCursor = {
+  createdAt: Date;
+  id: string;
+};
+
+type AggregateEventActivity = {
+  runnerIds: Set<string>;
+  sessionIds: Set<string>;
+};
+
+const aggregateEventScanSelect = {
+  id: true,
+  runnerId: true,
+  eventType: true,
+  createdAt: true,
+  payloadJson: true,
+  runner: {
+    select: {
+      name: true,
+    },
+  },
+  session: {
+    select: {
+      id: true,
+      sessionKey: true,
+      status: true,
+      agentType: true,
+    },
+  },
+} satisfies Prisma.TelemetryEventSelect;
+
+type AggregateEventScanRecord = Prisma.TelemetryEventGetPayload<{
+  select: typeof aggregateEventScanSelect;
+}>;
+
+const aggregateEventTimestampSelect = {
+  id: true,
+  createdAt: true,
+} satisfies Prisma.TelemetryEventSelect;
+
+type AggregateEventTimestampRecord = Prisma.TelemetryEventGetPayload<{
+  select: typeof aggregateEventTimestampSelect;
+}>;
+
 const serializeRunner = (runner: RunnerListRecord) => ({
   id: runner.id,
   name: runner.name,
@@ -387,6 +432,18 @@ const serializeAggregateSession = (session: {
   startedAt: session.startedAt,
   endedAt: session.endedAt,
   summary: session.summary,
+});
+
+const mapAggregateEventRecord = (event: AggregateEventScanRecord): AggregateEventView => ({
+  runnerId: event.runnerId,
+  runnerName: event.runner.name,
+  sessionId: event.session?.id ?? null,
+  sessionKey: event.session?.sessionKey ?? null,
+  sessionStatus: event.session?.status ?? null,
+  sessionAgentType: event.session?.agentType ?? null,
+  eventType: event.eventType,
+  payload: normalizeStoredPayload(event.payloadJson, event.createdAt),
+  createdAt: event.createdAt,
 });
 
 const listFilteredRunners = async (query: {
@@ -481,14 +538,6 @@ const eventMatchesFilters = (
 const resolveAnalyticsSince = (query: { since?: string }) =>
   new Date(query.since ?? Date.now() - analyticsWindowMs);
 
-const sessionOverlapsSince = (
-  session: { startedAt: Date; endedAt: Date | null; status: string },
-  since: Date,
-) =>
-  session.startedAt >= since ||
-  (session.endedAt != null && session.endedAt >= since) ||
-  (session.endedAt == null && session.status === "running");
-
 const matchesSessionSearch = (session: AggregateSessionView, search: string | undefined) => {
   if (!search) {
     return true;
@@ -573,6 +622,29 @@ const buildAggregateEventWhere = (query: AggregateQuery, since: Date) => {
   } satisfies Prisma.TelemetryEventWhereInput;
 };
 
+const buildAggregateEventCursorWhere = (
+  where: Prisma.TelemetryEventWhereInput,
+  cursor: AggregateEventCursor | undefined,
+) => {
+  if (!cursor) {
+    return where;
+  }
+
+  return {
+    AND: [
+      where,
+      {
+        OR: [
+          { createdAt: { lt: cursor.createdAt } },
+          {
+            AND: [{ createdAt: cursor.createdAt }, { id: { lt: cursor.id } }],
+          },
+        ],
+      },
+    ],
+  } satisfies Prisma.TelemetryEventWhereInput;
+};
+
 const matchesAggregateEventQuery = (
   event: AggregateEventView,
   query: AggregateQuery,
@@ -610,6 +682,44 @@ const matchesAggregateEventQuery = (
   );
 };
 
+const scanAggregateEventViews = async (
+  query: AggregateQuery,
+  options: {
+    ignoreStatus?: boolean;
+    overrideStatus?: (typeof sessionStatuses)[number];
+    ignoreSearch?: boolean;
+    since?: Date;
+  } = {},
+  onMatch: (event: AggregateEventView) => void,
+) => {
+  const since = options.since ?? resolveAnalyticsSince(query);
+  const baseWhere = buildAggregateEventWhere(query, since);
+  let cursor: AggregateEventCursor | undefined;
+
+  while (true) {
+    const events = await prisma.telemetryEvent.findMany({
+      where: buildAggregateEventCursorWhere(baseWhere, cursor),
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: aggregateEventPageSize,
+      select: aggregateEventScanSelect,
+    });
+
+    if (events.length === 0) {
+      break;
+    }
+
+    for (const event of events) {
+      const aggregateEvent = mapAggregateEventRecord(event);
+      if (matchesAggregateEventQuery(aggregateEvent, query, options)) {
+        onMatch(aggregateEvent);
+      }
+    }
+
+    const lastEvent = events[events.length - 1];
+    cursor = lastEvent ? { createdAt: lastEvent.createdAt, id: lastEvent.id } : undefined;
+  }
+};
+
 const listAggregateEvents = async (
   query: AggregateQuery,
   options: {
@@ -619,40 +729,103 @@ const listAggregateEvents = async (
     since?: Date;
   } = {},
 ) => {
-  const since = options.since ?? resolveAnalyticsSince(query);
-  const events = await prisma.telemetryEvent.findMany({
-    where: buildAggregateEventWhere(query, since),
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    include: {
-      runner: {
-        select: {
-          name: true,
-        },
-      },
-      session: {
-        select: {
-          id: true,
-          sessionKey: true,
-          status: true,
-          agentType: true,
-        },
-      },
-    },
+  const events: AggregateEventView[] = [];
+  await scanAggregateEventViews(query, options, (event) => {
+    events.push(event);
+  });
+  return events;
+};
+
+const collectAggregateEventActivity = async (
+  query: AggregateQuery,
+  options: {
+    ignoreStatus?: boolean;
+    overrideStatus?: (typeof sessionStatuses)[number];
+    ignoreSearch?: boolean;
+    since?: Date;
+  } = {},
+) => {
+  const activity: AggregateEventActivity = {
+    runnerIds: new Set<string>(),
+    sessionIds: new Set<string>(),
+  };
+
+  await scanAggregateEventViews(query, options, (event) => {
+    activity.runnerIds.add(event.runnerId);
+    if (event.sessionId) {
+      activity.sessionIds.add(event.sessionId);
+    }
   });
 
-  return events
-    .map((event) => ({
-      runnerId: event.runnerId,
-      runnerName: event.runner.name,
-      sessionId: event.session?.id ?? null,
-      sessionKey: event.session?.sessionKey ?? null,
-      sessionStatus: event.session?.status ?? null,
-      sessionAgentType: event.session?.agentType ?? null,
-      eventType: event.eventType,
-      payload: normalizeStoredPayload(event.payloadJson, event.createdAt),
-      createdAt: event.createdAt,
-    }))
-    .filter((event) => matchesAggregateEventQuery(event, query, options));
+  return activity;
+};
+
+const countAggregateEvents = async (
+  query: AggregateQuery,
+  options: {
+    ignoreStatus?: boolean;
+    overrideStatus?: (typeof sessionStatuses)[number];
+    ignoreSearch?: boolean;
+    since?: Date;
+  } = {},
+) => {
+  const since = options.since ?? resolveAnalyticsSince(query);
+  const effectiveStatus = options.overrideStatus ?? (options.ignoreStatus ? undefined : query.status);
+  const needsInMemoryFiltering = Boolean(query.agentType || effectiveStatus || query.search);
+
+  if (!needsInMemoryFiltering) {
+    return prisma.telemetryEvent.count({
+      where: buildAggregateEventWhere(query, since),
+    });
+  }
+
+  let count = 0;
+  await scanAggregateEventViews(query, { ...options, since }, () => {
+    count += 1;
+  });
+  return count;
+};
+
+const buildAggregateEventTimeseries = async (query: AggregateQuery) => {
+  const since = resolveAnalyticsSince(query);
+  const effectiveStatus = query.status;
+  const needsInMemoryFiltering = Boolean(query.agentType || effectiveStatus || query.search);
+  const counts = new Map<number, number>();
+
+  if (!needsInMemoryFiltering) {
+    const baseWhere = buildAggregateEventWhere(query, since);
+    let cursor: AggregateEventCursor | undefined;
+
+    while (true) {
+      const events = await prisma.telemetryEvent.findMany({
+        where: buildAggregateEventCursorWhere(baseWhere, cursor),
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: aggregateEventPageSize,
+        select: aggregateEventTimestampSelect,
+      });
+
+      if (events.length === 0) {
+        break;
+      }
+
+      for (const event of events) {
+        const bucketStart = Math.floor(event.createdAt.getTime() / eventTimeseriesBucketMs) * eventTimeseriesBucketMs;
+        counts.set(bucketStart, (counts.get(bucketStart) ?? 0) + 1);
+      }
+
+      const lastEvent = events[events.length - 1] as AggregateEventTimestampRecord | undefined;
+      cursor = lastEvent ? { createdAt: lastEvent.createdAt, id: lastEvent.id } : undefined;
+    }
+
+    return counts;
+  }
+
+  await scanAggregateEventViews(query, { since }, (event) => {
+    const bucketStart = Math.floor(event.createdAt.getTime() / eventTimeseriesBucketMs) * eventTimeseriesBucketMs;
+    counts.set(bucketStart, (counts.get(bucketStart) ?? 0) + 1);
+  });
+
+  return counts;
 };
 
 const getAggregateScope = async (
@@ -665,22 +838,36 @@ const getAggregateScope = async (
 ) => {
   const since = resolveAnalyticsSince(query);
   const effectiveStatus = options.overrideStatus ?? (options.ignoreStatus ? undefined : query.status);
-  const [runners, events, sessions] = await Promise.all([
+  const needsEventActivity = Boolean(query.search || query.agentType || effectiveStatus || query.since);
+  const [runners, eventActivity, sessions] = await Promise.all([
     listFilteredRunners({
       runnerId: query.runnerId,
       label: query.label,
     }),
-    listAggregateEvents(query, {
-      ignoreStatus: options.ignoreStatus,
-      overrideStatus: options.overrideStatus,
-      ignoreSearch: options.ignoreSearch,
-      since,
-    }),
+    needsEventActivity
+      ? collectAggregateEventActivity(query, {
+          ignoreStatus: options.ignoreStatus,
+          overrideStatus: options.overrideStatus,
+          ignoreSearch: options.ignoreSearch,
+          since,
+        })
+      : Promise.resolve({
+          runnerIds: new Set<string>(),
+          sessionIds: new Set<string>(),
+        }),
     prisma.agentSession.findMany({
-      where: {
-        ...(query.runnerId ? { runnerId: query.runnerId } : {}),
-        ...(query.label ? { runner: { is: { labels: { has: query.label } } } } : {}),
-      },
+      where: buildSessionWhere(
+        {
+          ...query,
+          search: undefined,
+        },
+        {
+          ignoreStatus: options.ignoreStatus,
+          overrideStatus: options.overrideStatus,
+          since,
+          sinceMode: "activity",
+        },
+      ),
       orderBy: [{ endedAt: "desc" }, { startedAt: "desc" }],
       include: {
         runner: {
@@ -692,32 +879,15 @@ const getAggregateScope = async (
     }),
   ]);
 
-  const aggregateSessions = sessions
-    .map((session) => serializeAggregateSession(session))
-    .filter((session) => {
-      if (!sessionOverlapsSince(session, since)) {
-        return false;
-      }
-
-      if (query.agentType && session.agentType !== query.agentType) {
-        return false;
-      }
-
-      if (effectiveStatus && session.status !== effectiveStatus) {
-        return false;
-      }
-
-      return true;
-    });
+  const aggregateSessions = sessions.map((session) => serializeAggregateSession(session));
 
   if (!options.ignoreSearch && query.search) {
-    const matchingEventSessionIds = new Set(events.flatMap((event) => (event.sessionId ? [event.sessionId] : [])));
     const filteredSessions = aggregateSessions.filter(
-      (session) => matchesSessionSearch(session, query.search) || matchingEventSessionIds.has(session.id),
+      (session) => matchesSessionSearch(session, query.search) || eventActivity.sessionIds.has(session.id),
     );
     const activityRunnerIds = new Set<string>([
       ...filteredSessions.map((session) => session.runnerId),
-      ...events.map((event) => event.runnerId),
+      ...eventActivity.runnerIds,
     ]);
     const runnerSearchIds = new Set(runners.filter((runner) => matchesRunnerSearch(runner, query.search)).map((runner) => runner.id));
     const requireActivityMatch = Boolean(query.agentType || effectiveStatus || query.since);
@@ -737,7 +907,6 @@ const getAggregateScope = async (
 
     return {
       since,
-      events,
       sessions: filteredSessions,
       runners: runners.filter((runner) => matchingRunnerIds.has(runner.id)),
     };
@@ -746,7 +915,6 @@ const getAggregateScope = async (
   if (!query.agentType && !effectiveStatus && !query.since) {
     return {
       since,
-      events,
       sessions: aggregateSessions,
       runners,
     };
@@ -754,12 +922,11 @@ const getAggregateScope = async (
 
   const activityRunnerIds = new Set<string>([
     ...aggregateSessions.map((session) => session.runnerId),
-    ...events.map((event) => event.runnerId),
+    ...eventActivity.runnerIds,
   ]);
 
   return {
     since,
-    events,
     sessions: aggregateSessions,
     runners: runners.filter((runner) => activityRunnerIds.has(runner.id)),
   };
@@ -1277,17 +1444,16 @@ export const registerV1Routes = async (app: any) => {
 
   app.get("/v1/analytics/failures", async (request: any) => {
     const query = dashboardAggregateQuerySchema.parse(request.query);
-    const { events } = await getAggregateScope(query);
     const counts = new Map<string, number>();
 
-    for (const event of events) {
+    await scanAggregateEventViews(query, {}, (event) => {
       if (!isFailureAnalyticsEvent(event.eventType, event.payload)) {
-        continue;
+        return;
       }
 
       const key = event.payload.category ?? "unknown";
       counts.set(key, (counts.get(key) ?? 0) + 1);
-    }
+    });
 
     return analyticsBreakdownResponseSchema.parse({
       items: toAnalyticsBreakdown(counts),
@@ -1328,13 +1494,7 @@ export const registerV1Routes = async (app: any) => {
 
   app.get("/v1/analytics/events/timeseries", async (request: any) => {
     const query = dashboardAggregateQuerySchema.parse(request.query);
-    const { events } = await getAggregateScope(query);
-    const counts = new Map<number, number>();
-
-    for (const event of events) {
-      const bucketStart = Math.floor(event.createdAt.getTime() / eventTimeseriesBucketMs) * eventTimeseriesBucketMs;
-      counts.set(bucketStart, (counts.get(bucketStart) ?? 0) + 1);
-    }
+    const counts = await buildAggregateEventTimeseries(query);
 
     return eventTimeseriesResponseSchema.parse({
       points: [...counts.entries()]
@@ -1348,7 +1508,7 @@ export const registerV1Routes = async (app: any) => {
 
   app.get("/v1/alerts", async (request: any) => {
     const query = dashboardAggregateQuerySchema.parse(request.query);
-    const [baseScope, runningScope, failedScope] = await Promise.all([
+    const [baseScope, runningScope, failedScope, aggregateEventCount] = await Promise.all([
       getAggregateScope(query),
       getAggregateScope(query, {
         ignoreStatus: true,
@@ -1358,10 +1518,10 @@ export const registerV1Routes = async (app: any) => {
         ignoreStatus: true,
         overrideStatus: "failed",
       }),
+      countAggregateEvents(query),
     ]);
 
     const visibleRunners = baseScope.runners;
-    const aggregateEvents = baseScope.events;
     const activeSessions = runningScope.sessions.length;
     const failedSessionCount = failedScope.sessions.length;
     const latestFailedSession = [...failedScope.sessions].sort((left, right) => {
@@ -1428,7 +1588,7 @@ export const registerV1Routes = async (app: any) => {
 
     if (alerts.length === 0) {
       alerts.push(
-        aggregateEvents.length === 0
+        aggregateEventCount === 0
           ? {
               id: "awaiting-activity",
               severity: "info",
@@ -1451,7 +1611,7 @@ export const registerV1Routes = async (app: any) => {
 
   app.get("/v1/stats", async (request: any) => {
     const query = dashboardAggregateQuerySchema.parse(request.query);
-    const [baseScope, runningScope, failedScope] = await Promise.all([
+    const [baseScope, runningScope, failedScope, aggregateEventCount] = await Promise.all([
       getAggregateScope(query),
       getAggregateScope(query, {
         ignoreStatus: true,
@@ -1461,16 +1621,16 @@ export const registerV1Routes = async (app: any) => {
         ignoreStatus: true,
         overrideStatus: "failed",
       }),
+      countAggregateEvents(query),
     ]);
     const visibleRunners = baseScope.runners;
-    const aggregateEvents = baseScope.events;
 
     return statsResponseSchema.parse({
       totalRunners: visibleRunners.length,
       onlineRunners: visibleRunners.filter((runner) => runner.isOnline).length,
       activeSessions: runningScope.sessions.length,
       sessionsLast24h: baseScope.sessions.length,
-      eventsLast24h: aggregateEvents.length,
+      eventsLast24h: aggregateEventCount,
       failedSessionsLast24h: failedScope.sessions.length,
     });
   });
