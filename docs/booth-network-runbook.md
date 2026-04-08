@@ -10,8 +10,10 @@ This runbook validates the shared-demo topology before booth rehearsal:
 
 Start the shared backend on a LAN-reachable interface:
 
+From the AgentHarbor repo root:
+
 ```bash
-cd /Users/caseygraika/Documents/Github/Patrol6/AgentHarbor-codex-implementation-priorities
+cd <repo-root>
 CONTROL_NODE_HOST=0.0.0.0 \
 CONTROL_NODE_PORT=8443 \
 pnpm dev:control
@@ -31,8 +33,10 @@ Expected result:
 
 Enroll each runner against the shared host instead of `localhost`:
 
+From `<repo-root>/apps/runner`:
+
 ```bash
-cd /Users/caseygraika/Documents/Github/Patrol6/AgentHarbor-codex-implementation-priorities/apps/runner
+cd <repo-root>/apps/runner
 node dist/index.js enroll \
   --url https://<host-lan-ip>:8443 \
   --name booth-laptop-1 \
@@ -56,8 +60,10 @@ node dist/index.js demo \
 
 Point the dashboard at the shared control node:
 
+From the AgentHarbor repo root:
+
 ```bash
-cd /Users/caseygraika/Documents/Github/Patrol6/AgentHarbor-codex-implementation-priorities
+cd <repo-root>
 AGENTHARBOR_CONTROL_NODE_URL=https://<host-lan-ip>:8443 \
 AGENTHARBOR_ALLOW_SELF_SIGNED=true \
 PORT=3003 \
