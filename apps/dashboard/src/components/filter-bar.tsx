@@ -6,6 +6,9 @@ import {
   dashboardAgentTypes,
   dashboardQueryToSearchParams,
   dashboardSessionStatuses,
+  dashboardTimeRangeOptions,
+  inferTimeRangeSelectionFromQuery,
+  type DashboardTimeRangeValue,
   type DashboardFilterOptions,
   type DashboardQuery,
 } from "../lib/dashboard-query";
@@ -23,6 +26,7 @@ export function FilterBar({
   const pathname = usePathname();
   const [isPending, startTransition] = useTransition();
   const [searchValue, setSearchValue] = useState(query.search ?? "");
+  const timeRangeSelection = inferTimeRangeSelectionFromQuery(query);
 
   useEffect(() => {
     setSearchValue(query.search ?? "");
@@ -59,7 +63,7 @@ export function FilterBar({
           <p className="eyebrow">Filters</p>
           <h2>URL-driven dashboard state</h2>
         </div>
-        {query.since ? <span className="subtle-badge">Time window preserved from link</span> : null}
+        {query.since ? <span className="subtle-badge">Time window active</span> : <span className="subtle-badge">24-hour analytics default</span>}
       </div>
 
       <form className="filter-layout" onSubmit={submitSearch}>
@@ -126,6 +130,33 @@ export function FilterBar({
                 {label.label}
               </option>
             ))}
+          </select>
+        </div>
+
+        <div className="filter-field">
+          <label htmlFor="dashboard-window">Time window</label>
+          <select
+            id="dashboard-window"
+            onChange={(event) => {
+              const nextValue = event.target.value as DashboardTimeRangeValue | "custom";
+
+              if (nextValue === "custom") {
+                return;
+              }
+
+              updateQuery({
+                since: undefined,
+                timeRange: nextValue === "all" ? undefined : nextValue,
+              });
+            }}
+            value={timeRangeSelection}
+          >
+            {dashboardTimeRangeOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+            {timeRangeSelection === "custom" ? <option value="custom">Custom timestamp from link</option> : null}
           </select>
         </div>
 

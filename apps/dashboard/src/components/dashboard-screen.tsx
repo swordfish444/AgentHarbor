@@ -1,7 +1,11 @@
 import type { DashboardData } from "../lib/control-node";
-import { selectDashboardFixtureVariant } from "../lib/dashboard-fixtures";
 import { formatDateTime } from "../lib/formatters";
-import { hasActiveDashboardFilters, type DashboardFilterOptions, type DashboardQuery } from "../lib/dashboard-query";
+import {
+  dashboardTimeRangeOptions,
+  hasActiveDashboardFilters,
+  type DashboardFilterOptions,
+  type DashboardQuery,
+} from "../lib/dashboard-query";
 import { AlertRail } from "./alert-rail";
 import { AnalyticsPanel } from "./analytics-panel";
 import { FilterBar } from "./filter-bar";
@@ -19,15 +23,17 @@ export function DashboardScreen({
   query: DashboardQuery;
   filterOptions: DashboardFilterOptions;
 }) {
-  const fixtureVariant = selectDashboardFixtureVariant(data);
   const filtered = hasActiveDashboardFilters(query);
+  const selectedTimeRangeLabel = query.timeRange
+    ? dashboardTimeRangeOptions.find((option) => option.value === query.timeRange)?.label ?? query.timeRange
+    : null;
 
   const activeFilters = [
     query.status ? `Status: ${query.status}` : null,
     query.agentType ? `Agent: ${query.agentType}` : null,
     query.label ? `Label: ${query.label}` : null,
     query.search ? `Search: ${query.search}` : null,
-    query.since ? `Since: ${formatDateTime(query.since)}` : null,
+    selectedTimeRangeLabel ? `Window: ${selectedTimeRangeLabel}` : query.since ? `Since: ${formatDateTime(query.since)}` : null,
   ].filter(Boolean) as string[];
 
   return (
@@ -37,8 +43,8 @@ export function DashboardScreen({
           <p className="eyebrow">AgentHarbor</p>
           <h1>Control tower visibility for AI agents spread across your fleet.</h1>
           <p className="hero-copy">
-            The dashboard now has a stable screen skeleton, URL-driven filters, and data plumbing aligned to the
-            backend kickoff branch. Live alerts and aggregate analytics still land in the next phases.
+            The dashboard is now reading live fleet stats, analytics, and operator alerts from the control node so the
+            view stays anchored to the same slice of sessions, runners, and telemetry throughout the screen.
           </p>
           {filtered ? (
             <div className="hero-filter-list">
@@ -60,13 +66,19 @@ export function DashboardScreen({
           <div className="hero-meta-block">
             <p className="eyebrow">Filters</p>
             <p>{filtered ? "URL filters active" : "Viewing the full dashboard slice"}</p>
-            {query.since ? <p>Time window preserved from link</p> : <p>Stats remain global in this phase</p>}
+            {selectedTimeRangeLabel ? (
+              <p>Rolling window: {selectedTimeRangeLabel}</p>
+            ) : query.since ? (
+              <p>Window starts {formatDateTime(query.since)}</p>
+            ) : (
+              <p>Using the default 24-hour analytics window</p>
+            )}
           </div>
         </div>
       </section>
 
       <MetricsStrip hasActiveFilters={filtered} stats={data.stats} />
-      <AlertRail variant={fixtureVariant} />
+      <AlertRail alerts={data.alerts} />
       <FilterBar filterOptions={filterOptions} query={query} />
 
       <section className="dashboard-main-grid">
@@ -76,7 +88,7 @@ export function DashboardScreen({
 
       <section className="dashboard-lower-grid">
         <LiveEventFeed events={data.events} query={query} />
-        <AnalyticsPanel variant={fixtureVariant} />
+        <AnalyticsPanel analytics={data.analytics} />
       </section>
     </div>
   );

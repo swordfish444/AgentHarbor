@@ -45,6 +45,17 @@ select {
   font: inherit;
 }
 
+@keyframes panel-pulse {
+  0%,
+  100% {
+    opacity: 0.52;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
 .shell {
   width: min(1440px, calc(100% - 48px));
   margin: 0 auto;
@@ -182,7 +193,7 @@ select {
 
 .filter-layout {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+  grid-template-columns: repeat(6, minmax(0, 1fr)) auto;
   gap: 14px;
   align-items: end;
 }
@@ -247,11 +258,17 @@ select {
   border-color: rgba(132, 195, 232, 0.1);
 }
 
+.route-link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .button-primary:hover,
 .button-secondary:hover,
 .list-card:hover,
 .event-link:hover,
-.alert-card:hover {
+.alert-card-interactive:hover {
   transform: translateY(-2px);
 }
 
@@ -394,13 +411,13 @@ td strong,
 
 .list-card,
 .event-link,
-.alert-card {
+.alert-card-interactive {
   cursor: pointer;
 }
 
 .list-card:hover,
 .event-link:hover,
-.alert-card:hover {
+.alert-card-interactive:hover {
   border-color: rgba(74, 194, 255, 0.34);
 }
 
@@ -522,9 +539,51 @@ td strong,
   background: rgba(8, 20, 34, 0.64);
 }
 
+.compact-empty-state {
+  margin-top: 0;
+}
+
 .empty-state a,
 .back-link {
   color: var(--accent);
+}
+
+.route-state-shell {
+  min-height: 100vh;
+}
+
+.route-state {
+  max-width: 860px;
+  margin: 12vh auto 0;
+}
+
+.route-state h1 {
+  font-size: clamp(2rem, 4vw, 3.6rem);
+  letter-spacing: -0.04em;
+  line-height: 0.96;
+  margin: 10px 0 18px;
+}
+
+.route-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.loading-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 28px;
+}
+
+.loading-card {
+  min-height: 120px;
+  border-radius: 18px;
+  border: 1px solid rgba(132, 195, 232, 0.08);
+  background: linear-gradient(180deg, rgba(18, 45, 71, 0.92), rgba(9, 23, 37, 0.92));
+  animation: panel-pulse 1.6s ease-in-out infinite;
 }
 
 .detail-hero {
@@ -545,6 +604,11 @@ td strong,
   grid-template-columns: minmax(320px, 0.8fr) minmax(0, 1.2fr);
 }
 
+.detail-sidebar-stack {
+  display: grid;
+  gap: 20px;
+}
+
 .summary-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -552,6 +616,25 @@ td strong,
 .summary-card {
   display: grid;
   gap: 8px;
+}
+
+.insight-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.insight-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(132, 195, 232, 0.08);
+  border-radius: 18px;
+  padding: 16px;
+  background: rgba(9, 23, 37, 0.92);
+}
+
+.failure-insight-card {
+  border-color: rgba(255, 122, 122, 0.22);
+  background: linear-gradient(180deg, rgba(56, 17, 22, 0.9), rgba(31, 11, 15, 0.92));
 }
 
 .timeline-list {
@@ -615,6 +698,10 @@ td strong,
   padding-bottom: 18px;
 }
 
+.raw-event-card {
+  cursor: default;
+}
+
 @media (max-width: 1440px) {
   .filter-layout {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -634,6 +721,10 @@ td strong,
   }
 
   .alert-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .loading-grid {
     grid-template-columns: 1fr;
   }
 }
