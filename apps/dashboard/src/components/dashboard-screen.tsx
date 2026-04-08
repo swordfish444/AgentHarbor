@@ -1,5 +1,5 @@
 import type { DashboardData } from "../lib/control-node";
-import { selectDashboardFixtureVariant } from "../lib/dashboard-fixtures";
+import { buildDashboardAlerts } from "../lib/dashboard-alerts";
 import { formatDateTime } from "../lib/formatters";
 import { hasActiveDashboardFilters, type DashboardFilterOptions, type DashboardQuery } from "../lib/dashboard-query";
 import { AlertRail } from "./alert-rail";
@@ -19,8 +19,8 @@ export function DashboardScreen({
   query: DashboardQuery;
   filterOptions: DashboardFilterOptions;
 }) {
-  const fixtureVariant = selectDashboardFixtureVariant(data);
   const filtered = hasActiveDashboardFilters(query);
+  const alerts = buildDashboardAlerts(data);
 
   const activeFilters = [
     query.status ? `Status: ${query.status}` : null,
@@ -37,8 +37,8 @@ export function DashboardScreen({
           <p className="eyebrow">AgentHarbor</p>
           <h1>Control tower visibility for AI agents spread across your fleet.</h1>
           <p className="hero-copy">
-            The dashboard now has a stable screen skeleton, URL-driven filters, and data plumbing aligned to the
-            backend kickoff branch. Live alerts and aggregate analytics still land in the next phases.
+            The dashboard now has a stable screen skeleton, URL-driven filters, and real operator surfaces replacing
+            placeholder preview cards where backend data is already available.
           </p>
           {filtered ? (
             <div className="hero-filter-list">
@@ -66,7 +66,7 @@ export function DashboardScreen({
       </section>
 
       <MetricsStrip hasActiveFilters={filtered} stats={data.stats} />
-      <AlertRail variant={fixtureVariant} />
+      <AlertRail alerts={alerts} />
       <FilterBar filterOptions={filterOptions} query={query} />
 
       <section className="dashboard-main-grid">
