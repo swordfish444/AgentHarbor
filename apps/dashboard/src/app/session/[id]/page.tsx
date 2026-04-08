@@ -1,4 +1,7 @@
 import { notFound } from "next/navigation";
+import { SessionBreakdownCard } from "../../../components/session-breakdown-card";
+import { SessionEventList } from "../../../components/session-event-list";
+import { SessionFailureCard } from "../../../components/session-failure-card";
 import { SessionHero } from "../../../components/session-hero";
 import { SessionSummaryCards } from "../../../components/session-summary-cards";
 import { SessionTimeline } from "../../../components/session-timeline";
@@ -15,8 +18,15 @@ export default async function SessionDetailPage({ params }: { params: Promise<{ 
         <SessionHero session={session} />
 
         <section className="detail-layout">
-          <SessionSummaryCards session={session} />
-          <SessionTimeline events={session.events} />
+          <div className="detail-column">
+            <SessionFailureCard session={session} />
+            <SessionSummaryCards session={session} />
+            <SessionBreakdownCard session={session} />
+          </div>
+          <div className="detail-column">
+            <SessionTimeline events={session.events} />
+            <SessionEventList events={session.events} />
+          </div>
         </section>
       </main>
     );

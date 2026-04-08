@@ -65,6 +65,7 @@ select {
 .hero,
 .dashboard-main-grid,
 .dashboard-lower-grid,
+.detail-column,
 .detail-layout {
   display: grid;
   gap: 20px;
@@ -497,6 +498,15 @@ td strong,
   gap: 24px;
 }
 
+.detail-hero[data-status="failed"] {
+  border-color: rgba(255, 122, 122, 0.28);
+  box-shadow: 0 22px 44px rgba(73, 11, 15, 0.28);
+}
+
+.detail-hero[data-status="completed"] {
+  border-color: rgba(78, 233, 160, 0.2);
+}
+
 .detail-meta {
   min-width: 260px;
   display: grid;
@@ -509,13 +519,51 @@ td strong,
   grid-template-columns: minmax(320px, 0.8fr) minmax(0, 1.2fr);
 }
 
+.detail-column {
+  align-content: start;
+}
+
 .summary-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.summary-grid-compact {
+  margin: 18px 0 20px;
 }
 
 .summary-card {
   display: grid;
   gap: 8px;
+}
+
+.summary-card .status-pill {
+  width: fit-content;
+}
+
+.outcome-card {
+  display: grid;
+  gap: 18px;
+}
+
+.outcome-card-failed {
+  border-color: rgba(255, 122, 122, 0.22);
+  background: linear-gradient(180deg, rgba(56, 17, 22, 0.92), rgba(31, 11, 15, 0.94));
+}
+
+.outcome-card-completed {
+  border-color: rgba(78, 233, 160, 0.2);
+}
+
+.outcome-copy {
+  margin: 0;
+  font-size: 1.02rem;
+  line-height: 1.65;
+}
+
+.outcome-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .timeline-list {
@@ -577,6 +625,21 @@ td strong,
 
 .timeline-copy {
   padding-bottom: 18px;
+}
+
+.event-feed-raw {
+  max-height: 860px;
+}
+
+.payload-preview {
+  margin: 14px 0 0;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(132, 195, 232, 0.08);
+  background: rgba(3, 12, 21, 0.72);
+  color: #cfe7ff;
+  overflow-x: auto;
+  font: 0.82rem/1.55 "IBM Plex Mono", "Cascadia Code", monospace;
 }
 
 @media (max-width: 1440px) {

@@ -1,11 +1,20 @@
 import Link from "next/link";
 import type { SessionDetail } from "@agentharbor/shared";
 import { formatDateTime, formatDurationMs, formatTokenUsage } from "../lib/formatters";
+import { getSessionFailureSummary } from "../lib/session-detail";
 import { StatusPill } from "./status-pill";
 
 export function SessionHero({ session }: { session: SessionDetail }) {
+  const failureSummary = getSessionFailureSummary(session);
+  const heroCopy =
+    session.status === "failed"
+      ? `Failure surfaced in ${failureSummary?.category ?? "failure"} and is ready for drilldown below.`
+      : session.status === "completed"
+        ? "The session reached a clean terminal state and the timeline below captures the full path."
+        : "The session is still active, so the timeline and raw feed will keep telling the story as telemetry arrives.";
+
   return (
-    <section className="panel detail-hero">
+    <section className="panel detail-hero" data-status={session.status}>
       <div>
         <Link className="back-link" href="/">
           Back to dashboard
@@ -13,7 +22,7 @@ export function SessionHero({ session }: { session: SessionDetail }) {
         <p className="eyebrow">Session Detail</p>
         <h1>{session.summary ?? session.sessionKey}</h1>
         <p className="hero-copy">
-          Runner <strong>{session.runnerName}</strong> tracked as <strong>{session.agentType}</strong>.
+          Runner <strong>{session.runnerName}</strong> tracked as <strong>{session.agentType}</strong>. {heroCopy}
         </p>
       </div>
       <div className="detail-meta">
