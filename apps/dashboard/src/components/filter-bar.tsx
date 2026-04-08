@@ -7,8 +7,7 @@ import {
   dashboardQueryToSearchParams,
   dashboardSessionStatuses,
   dashboardTimeRangeOptions,
-  inferTimeRangeSelection,
-  resolveSinceForTimeRange,
+  inferTimeRangeSelectionFromQuery,
   type DashboardTimeRangeValue,
   type DashboardFilterOptions,
   type DashboardQuery,
@@ -27,7 +26,7 @@ export function FilterBar({
   const pathname = usePathname();
   const [isPending, startTransition] = useTransition();
   const [searchValue, setSearchValue] = useState(query.search ?? "");
-  const timeRangeSelection = inferTimeRangeSelection(query.since);
+  const timeRangeSelection = inferTimeRangeSelectionFromQuery(query);
 
   useEffect(() => {
     setSearchValue(query.search ?? "");
@@ -146,7 +145,8 @@ export function FilterBar({
               }
 
               updateQuery({
-                since: resolveSinceForTimeRange(nextValue),
+                since: undefined,
+                timeRange: nextValue === "all" ? undefined : nextValue,
               });
             }}
             value={timeRangeSelection}

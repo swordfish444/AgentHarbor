@@ -8,6 +8,7 @@ export interface DashboardQuery {
   label?: string;
   search?: string;
   since?: string;
+  timeRange?: DashboardTimeRangeValue;
 }
 
 export interface DashboardFilterOptions {
@@ -59,7 +60,9 @@ export const normalizeDashboardQuery = (searchParams: Record<string, string | st
   const runnerId = parseOptionalValue(optionalTextSchema, pickFirstValue(searchParams.runnerId));
   const label = parseOptionalValue(runnerLabelSchema.optional(), pickFirstValue(searchParams.label));
   const search = parseOptionalValue(optionalTextSchema, pickFirstValue(searchParams.search));
-  const since = parseOptionalValue(optionalDateTimeSchema, pickFirstValue(searchParams.since));
+  const sinceParam = parseOptionalValue(optionalDateTimeSchema, pickFirstValue(searchParams.since));
+  const timeRange = parseOptionalValue(dashboardTimeRangeSchema.optional(), pickFirstValue(searchParams.window));
+  const since = timeRange ? resolveSinceForTimeRange(timeRange) : sinceParam;
 
   return {
     ...(status ? { status } : {}),
@@ -68,6 +71,7 @@ export const normalizeDashboardQuery = (searchParams: Record<string, string | st
     ...(label ? { label } : {}),
     ...(search ? { search } : {}),
     ...(since ? { since } : {}),
+    ...(timeRange ? { timeRange } : {}),
   };
 };
 
@@ -79,18 +83,29 @@ export const dashboardQueryToSearchParams = (query: DashboardQuery) => {
       continue;
     }
 
+    if (key === "timeRange") {
+      searchParams.set("window", value);
+      continue;
+    }
+
+    if (key === "since" && query.timeRange) {
+      continue;
+    }
+
     searchParams.set(key, value);
   }
 
   return searchParams;
 };
 
-export const hasActiveDashboardFilters = (query: DashboardQuery) => Object.values(query).some(Boolean);
+export const hasActiveDashboardFilters = (query: DashboardQuery) =>
+  Boolean(query.status || query.agentType || query.runnerId || query.label || query.search || query.since);
 
 export const dashboardSessionStatuses = [...sessionStatuses];
 export const dashboardAgentTypes = [...agentTypes];
 
 export const dashboardTimeRangeValues = dashboardTimeRangeOptions.map((option) => option.value);
+const dashboardTimeRangeSchema = z.enum(dashboardTimeRangeValues);
 
 const customTimeRangeToleranceMs = 2 * 60 * 1000;
 
@@ -105,6 +120,26 @@ export const resolveSinceForTimeRange = (range: DashboardTimeRangeValue) => {
 };
 
 export const inferTimeRangeSelection = (since: string | undefined): DashboardTimeRangeSelection => {
+  if (since == null) {
+    return "all";
+  }
+
+  return inferTimeRangeSelectionFromSince(since);
+};
+
+export const inferTimeRangeSelectionFromQuery = (query: DashboardQuery): DashboardTimeRangeSelection => {
+  if (query.timeRange) {
+    return query.timeRange;
+  }
+
+  if (!query.since) {
+    return "all";
+  }
+
+  return inferTimeRangeSelectionFromSince(query.since);
+};
+
+const inferTimeRangeSelectionFromSince = (since: string): DashboardTimeRangeSelection => {
   if (!since) {
     return "all";
   }

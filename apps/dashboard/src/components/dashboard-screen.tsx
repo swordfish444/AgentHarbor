@@ -1,6 +1,11 @@
 import type { DashboardData } from "../lib/control-node";
 import { formatDateTime } from "../lib/formatters";
-import { hasActiveDashboardFilters, type DashboardFilterOptions, type DashboardQuery } from "../lib/dashboard-query";
+import {
+  dashboardTimeRangeOptions,
+  hasActiveDashboardFilters,
+  type DashboardFilterOptions,
+  type DashboardQuery,
+} from "../lib/dashboard-query";
 import { AlertRail } from "./alert-rail";
 import { AnalyticsPanel } from "./analytics-panel";
 import { FilterBar } from "./filter-bar";
@@ -19,13 +24,16 @@ export function DashboardScreen({
   filterOptions: DashboardFilterOptions;
 }) {
   const filtered = hasActiveDashboardFilters(query);
+  const selectedTimeRangeLabel = query.timeRange
+    ? dashboardTimeRangeOptions.find((option) => option.value === query.timeRange)?.label ?? query.timeRange
+    : null;
 
   const activeFilters = [
     query.status ? `Status: ${query.status}` : null,
     query.agentType ? `Agent: ${query.agentType}` : null,
     query.label ? `Label: ${query.label}` : null,
     query.search ? `Search: ${query.search}` : null,
-    query.since ? `Since: ${formatDateTime(query.since)}` : null,
+    selectedTimeRangeLabel ? `Window: ${selectedTimeRangeLabel}` : query.since ? `Since: ${formatDateTime(query.since)}` : null,
   ].filter(Boolean) as string[];
 
   return (
@@ -58,7 +66,13 @@ export function DashboardScreen({
           <div className="hero-meta-block">
             <p className="eyebrow">Filters</p>
             <p>{filtered ? "URL filters active" : "Viewing the full dashboard slice"}</p>
-            {query.since ? <p>Window starts {formatDateTime(query.since)}</p> : <p>Using the default 24-hour analytics window</p>}
+            {selectedTimeRangeLabel ? (
+              <p>Rolling window: {selectedTimeRangeLabel}</p>
+            ) : query.since ? (
+              <p>Window starts {formatDateTime(query.since)}</p>
+            ) : (
+              <p>Using the default 24-hour analytics window</p>
+            )}
           </div>
         </div>
       </section>

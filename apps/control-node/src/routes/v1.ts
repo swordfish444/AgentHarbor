@@ -293,6 +293,18 @@ type AggregateEventView = {
   createdAt: Date;
 };
 
+type AggregateSessionView = {
+  id: string;
+  runnerId: string;
+  runnerName: string;
+  agentType: string;
+  sessionKey: string;
+  status: string;
+  startedAt: Date;
+  endedAt: Date | null;
+  summary: string | null;
+};
+
 const serializeRunner = (runner: RunnerListRecord) => ({
   id: runner.id,
   name: runner.name,
@@ -351,6 +363,30 @@ const serializeEvent = (event: EventListRecord) => ({
   eventType: event.eventType,
   payload: normalizeStoredPayload(event.payloadJson, event.createdAt),
   createdAt: event.createdAt.toISOString(),
+});
+
+const serializeAggregateSession = (session: {
+  id: string;
+  runnerId: string;
+  agentType: string;
+  sessionKey: string;
+  status: string;
+  startedAt: Date;
+  endedAt: Date | null;
+  summary: string | null;
+  runner: {
+    name: string;
+  };
+}): AggregateSessionView => ({
+  id: session.id,
+  runnerId: session.runnerId,
+  runnerName: session.runner.name,
+  agentType: session.agentType,
+  sessionKey: session.sessionKey,
+  status: session.status,
+  startedAt: session.startedAt,
+  endedAt: session.endedAt,
+  summary: session.summary,
 });
 
 const listFilteredRunners = async (query: {
@@ -445,6 +481,26 @@ const eventMatchesFilters = (
 const resolveAnalyticsSince = (query: { since?: string }) =>
   new Date(query.since ?? Date.now() - analyticsWindowMs);
 
+const sessionOverlapsSince = (
+  session: { startedAt: Date; endedAt: Date | null; status: string },
+  since: Date,
+) =>
+  session.startedAt >= since ||
+  (session.endedAt != null && session.endedAt >= since) ||
+  (session.endedAt == null && session.status === "running");
+
+const matchesSessionSearch = (session: AggregateSessionView, search: string | undefined) => {
+  if (!search) {
+    return true;
+  }
+
+  return (
+    includesSearch(session.sessionKey, search) ||
+    includesSearch(session.summary, search) ||
+    includesSearch(session.runnerName, search)
+  );
+};
+
 const buildSessionWhere = (
   query: {
     status?: (typeof sessionStatuses)[number];
@@ -459,45 +515,76 @@ const buildSessionWhere = (
     ignoreSince?: boolean;
     overrideStatus?: (typeof sessionStatuses)[number];
     since?: Date;
+    sinceMode?: "started" | "activity";
   } = {},
 ) => {
   const effectiveStatus = options.overrideStatus ?? (options.ignoreStatus ? undefined : query.status);
   const effectiveSince = options.ignoreSince ? undefined : options.since ?? (query.since ? new Date(query.since) : undefined);
+  const filters: Prisma.AgentSessionWhereInput[] = [];
 
-  return {
-    ...(effectiveStatus ? { status: effectiveStatus } : {}),
-    ...(query.agentType ? { agentType: query.agentType } : {}),
-    ...(query.runnerId ? { runnerId: query.runnerId } : {}),
-    ...(query.label ? { runner: { is: { labels: { has: query.label } } } } : {}),
-    ...(effectiveSince ? { startedAt: { gte: effectiveSince } } : {}),
-    ...(query.search
-      ? {
-          OR: [
-            { sessionKey: { contains: query.search, mode: "insensitive" } },
-            { summary: { contains: query.search, mode: "insensitive" } },
-            { runner: { is: { name: { contains: query.search, mode: "insensitive" } } } },
-          ],
-        }
-      : {}),
-  } satisfies Prisma.AgentSessionWhereInput;
+  if (effectiveStatus) {
+    filters.push({ status: effectiveStatus });
+  }
+
+  if (query.agentType) {
+    filters.push({ agentType: query.agentType });
+  }
+
+  if (query.runnerId) {
+    filters.push({ runnerId: query.runnerId });
+  }
+
+  if (query.label) {
+    filters.push({ runner: { is: { labels: { has: query.label } } } });
+  }
+
+  if (effectiveSince) {
+    if (options.sinceMode === "started") {
+      filters.push({ startedAt: { gte: effectiveSince } });
+    } else {
+      filters.push({
+        OR: [
+          { startedAt: { gte: effectiveSince } },
+          { endedAt: { gte: effectiveSince } },
+          { AND: [{ endedAt: null }, { status: "running" }] },
+        ],
+      });
+    }
+  }
+
+  if (query.search) {
+    filters.push({
+      OR: [
+        { sessionKey: { contains: query.search, mode: "insensitive" } },
+        { summary: { contains: query.search, mode: "insensitive" } },
+        { runner: { is: { name: { contains: query.search, mode: "insensitive" } } } },
+      ],
+    });
+  }
+
+  return (filters.length > 0 ? { AND: filters } : {}) satisfies Prisma.AgentSessionWhereInput;
 };
 
 const buildAggregateEventWhere = (query: AggregateQuery, since: Date) => {
-  const scopedSessionFilter: Prisma.AgentSessionWhereInput = {
-    ...(query.status ? { status: query.status } : {}),
-    ...(query.agentType ? { agentType: query.agentType } : {}),
-  };
-
   return {
     ...(query.runnerId ? { runnerId: query.runnerId } : {}),
     ...(query.label ? { runner: { is: { labels: { has: query.label } } } } : {}),
     createdAt: { gte: since },
-    ...(query.status || query.agentType ? { session: { is: scopedSessionFilter } } : {}),
   } satisfies Prisma.TelemetryEventWhereInput;
 };
 
-const matchesAggregateEventQuery = (event: AggregateEventView, query: AggregateQuery) => {
-  if (query.status && event.sessionStatus !== query.status) {
+const matchesAggregateEventQuery = (
+  event: AggregateEventView,
+  query: AggregateQuery,
+  options: {
+    ignoreStatus?: boolean;
+    overrideStatus?: (typeof sessionStatuses)[number];
+    ignoreSearch?: boolean;
+  } = {},
+) => {
+  const effectiveStatus = options.overrideStatus ?? (options.ignoreStatus ? undefined : query.status);
+
+  if (effectiveStatus && event.sessionStatus !== effectiveStatus) {
     return false;
   }
 
@@ -509,7 +596,7 @@ const matchesAggregateEventQuery = (event: AggregateEventView, query: AggregateQ
     return false;
   }
 
-  if (!query.search) {
+  if (options.ignoreSearch || !query.search) {
     return true;
   }
 
@@ -523,8 +610,16 @@ const matchesAggregateEventQuery = (event: AggregateEventView, query: AggregateQ
   );
 };
 
-const listAggregateEvents = async (query: AggregateQuery) => {
-  const since = resolveAnalyticsSince(query);
+const listAggregateEvents = async (
+  query: AggregateQuery,
+  options: {
+    ignoreStatus?: boolean;
+    overrideStatus?: (typeof sessionStatuses)[number];
+    ignoreSearch?: boolean;
+    since?: Date;
+  } = {},
+) => {
+  const since = options.since ?? resolveAnalyticsSince(query);
   const events = await prisma.telemetryEvent.findMany({
     where: buildAggregateEventWhere(query, since),
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -557,34 +652,117 @@ const listAggregateEvents = async (query: AggregateQuery) => {
       payload: normalizeStoredPayload(event.payloadJson, event.createdAt),
       createdAt: event.createdAt,
     }))
-    .filter((event) => matchesAggregateEventQuery(event, query));
+    .filter((event) => matchesAggregateEventQuery(event, query, options));
 };
 
-const listAggregateRunners = async (query: AggregateQuery) => {
-  const runners = await listFilteredRunners({
-    runnerId: query.runnerId,
-    label: query.label,
-    search: query.search,
-  });
+const getAggregateScope = async (
+  query: AggregateQuery,
+  options: {
+    ignoreStatus?: boolean;
+    overrideStatus?: (typeof sessionStatuses)[number];
+    ignoreSearch?: boolean;
+  } = {},
+) => {
+  const since = resolveAnalyticsSince(query);
+  const effectiveStatus = options.overrideStatus ?? (options.ignoreStatus ? undefined : query.status);
+  const [runners, events, sessions] = await Promise.all([
+    listFilteredRunners({
+      runnerId: query.runnerId,
+      label: query.label,
+    }),
+    listAggregateEvents(query, {
+      ignoreStatus: options.ignoreStatus,
+      overrideStatus: options.overrideStatus,
+      ignoreSearch: options.ignoreSearch,
+      since,
+    }),
+    prisma.agentSession.findMany({
+      where: {
+        ...(query.runnerId ? { runnerId: query.runnerId } : {}),
+        ...(query.label ? { runner: { is: { labels: { has: query.label } } } } : {}),
+      },
+      orderBy: [{ endedAt: "desc" }, { startedAt: "desc" }],
+      include: {
+        runner: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    }),
+  ]);
 
-  if (!query.status && !query.agentType && !query.since) {
-    return runners;
+  const aggregateSessions = sessions
+    .map((session) => serializeAggregateSession(session))
+    .filter((session) => {
+      if (!sessionOverlapsSince(session, since)) {
+        return false;
+      }
+
+      if (query.agentType && session.agentType !== query.agentType) {
+        return false;
+      }
+
+      if (effectiveStatus && session.status !== effectiveStatus) {
+        return false;
+      }
+
+      return true;
+    });
+
+  if (!options.ignoreSearch && query.search) {
+    const matchingEventSessionIds = new Set(events.flatMap((event) => (event.sessionId ? [event.sessionId] : [])));
+    const filteredSessions = aggregateSessions.filter(
+      (session) => matchesSessionSearch(session, query.search) || matchingEventSessionIds.has(session.id),
+    );
+    const activityRunnerIds = new Set<string>([
+      ...filteredSessions.map((session) => session.runnerId),
+      ...events.map((event) => event.runnerId),
+    ]);
+    const runnerSearchIds = new Set(runners.filter((runner) => matchesRunnerSearch(runner, query.search)).map((runner) => runner.id));
+    const requireActivityMatch = Boolean(query.agentType || effectiveStatus || query.since);
+    const matchingRunnerIds = new Set(activityRunnerIds);
+
+    if (!requireActivityMatch) {
+      for (const runnerId of runnerSearchIds) {
+        matchingRunnerIds.add(runnerId);
+      }
+    } else {
+      for (const runnerId of runnerSearchIds) {
+        if (activityRunnerIds.has(runnerId)) {
+          matchingRunnerIds.add(runnerId);
+        }
+      }
+    }
+
+    return {
+      since,
+      events,
+      sessions: filteredSessions,
+      runners: runners.filter((runner) => matchingRunnerIds.has(runner.id)),
+    };
   }
 
-  const runnerIds = new Set(
-    (
-      await prisma.agentSession.findMany({
-        where: buildSessionWhere(query, {
-          since: resolveAnalyticsSince(query),
-        }),
-        select: {
-          runnerId: true,
-        },
-      })
-    ).map((session) => session.runnerId),
-  );
+  if (!query.agentType && !effectiveStatus && !query.since) {
+    return {
+      since,
+      events,
+      sessions: aggregateSessions,
+      runners,
+    };
+  }
 
-  return runners.filter((runner) => runnerIds.has(runner.id));
+  const activityRunnerIds = new Set<string>([
+    ...aggregateSessions.map((session) => session.runnerId),
+    ...events.map((event) => event.runnerId),
+  ]);
+
+  return {
+    since,
+    events,
+    sessions: aggregateSessions,
+    runners: runners.filter((runner) => activityRunnerIds.has(runner.id)),
+  };
 };
 
 const pluralize = (count: number, singular: string, plural = `${singular}s`) =>
@@ -612,7 +790,7 @@ const isFailureAnalyticsEvent = (
   eventType === "agent.session.failed" ||
   payload.status === "failed" ||
   payload.status === "blocked" ||
-  Boolean(payload.category && failureAnalyticsCategories.has(payload.category));
+  Boolean(payload.status == null && payload.category && failureAnalyticsCategories.has(payload.category));
 
 const publishStatsRefresh = (reason: string, data: Record<string, unknown>) => {
   publishStreamEvent("stats.refresh", {
@@ -1085,17 +1263,13 @@ export const registerV1Routes = async (app: any) => {
 
   app.get("/v1/analytics/agent-types", async (request: any) => {
     const query = dashboardAggregateQuerySchema.parse(request.query);
-    const groups = await prisma.agentSession.groupBy({
-      by: ["agentType"],
-      where: buildSessionWhere(query, {
-        since: resolveAnalyticsSince(query),
-      }),
-      _count: {
-        _all: true,
-      },
-    });
+    const { sessions } = await getAggregateScope(query);
+    const counts = new Map<string, number>();
 
-    const counts = new Map(groups.map((group) => [group.agentType, group._count._all]));
+    for (const session of sessions) {
+      counts.set(session.agentType, (counts.get(session.agentType) ?? 0) + 1);
+    }
+
     return analyticsBreakdownResponseSchema.parse({
       items: toAnalyticsBreakdown(counts),
     });
@@ -1103,7 +1277,7 @@ export const registerV1Routes = async (app: any) => {
 
   app.get("/v1/analytics/failures", async (request: any) => {
     const query = dashboardAggregateQuerySchema.parse(request.query);
-    const events = await listAggregateEvents(query);
+    const { events } = await getAggregateScope(query);
     const counts = new Map<string, number>();
 
     for (const event of events) {
@@ -1122,34 +1296,24 @@ export const registerV1Routes = async (app: any) => {
 
   app.get("/v1/analytics/runners/activity", async (request: any) => {
     const query = dashboardAggregateQuerySchema.parse(request.query);
-    const groups = await prisma.agentSession.groupBy({
-      by: ["runnerId"],
-      where: buildSessionWhere(query, {
-        since: resolveAnalyticsSince(query),
-      }),
-      _count: {
-        _all: true,
-      },
-    });
-    const runners = await prisma.runner.findMany({
-      where: {
-        id: {
-          in: groups.map((group) => group.runnerId),
-        },
-      },
-      select: {
-        id: true,
-        name: true,
-      },
-    });
-    const runnerNames = new Map(runners.map((runner) => [runner.id, runner.name]));
+    const { sessions } = await getAggregateScope(query);
+    const counts = new Map<string, { runnerName: string; sessionCount: number }>();
+
+    for (const session of sessions) {
+      const current = counts.get(session.runnerId) ?? {
+        runnerName: session.runnerName,
+        sessionCount: 0,
+      };
+      current.sessionCount += 1;
+      counts.set(session.runnerId, current);
+    }
 
     return runnerActivityResponseSchema.parse({
-      items: groups
-        .map((group) => ({
-          runnerId: group.runnerId,
-          runnerName: runnerNames.get(group.runnerId) ?? group.runnerId,
-          sessionCount: group._count._all,
+      items: [...counts.entries()]
+        .map(([runnerId, value]) => ({
+          runnerId,
+          runnerName: value.runnerName,
+          sessionCount: value.sessionCount,
         }))
         .sort((left, right) => {
           if (left.sessionCount !== right.sessionCount) {
@@ -1164,7 +1328,7 @@ export const registerV1Routes = async (app: any) => {
 
   app.get("/v1/analytics/events/timeseries", async (request: any) => {
     const query = dashboardAggregateQuerySchema.parse(request.query);
-    const events = await listAggregateEvents(query);
+    const { events } = await getAggregateScope(query);
     const counts = new Map<number, number>();
 
     for (const event of events) {
@@ -1184,44 +1348,27 @@ export const registerV1Routes = async (app: any) => {
 
   app.get("/v1/alerts", async (request: any) => {
     const query = dashboardAggregateQuerySchema.parse(request.query);
-    const since = resolveAnalyticsSince(query);
-
-    const [visibleRunners, activeSessions, failedSessionCount, latestFailedSession, aggregateEvents] = await Promise.all([
-      listAggregateRunners(query),
-      prisma.agentSession.count({
-        where: buildSessionWhere(query, {
-          ignoreSince: true,
-          ignoreStatus: true,
-          overrideStatus: "running",
-        }),
+    const [baseScope, runningScope, failedScope] = await Promise.all([
+      getAggregateScope(query),
+      getAggregateScope(query, {
+        ignoreStatus: true,
+        overrideStatus: "running",
       }),
-      prisma.agentSession.count({
-        where: buildSessionWhere(query, {
-          since,
-          ignoreStatus: true,
-          overrideStatus: "failed",
-        }),
+      getAggregateScope(query, {
+        ignoreStatus: true,
+        overrideStatus: "failed",
       }),
-      prisma.agentSession.findFirst({
-        where: buildSessionWhere(query, {
-          since,
-          ignoreStatus: true,
-          overrideStatus: "failed",
-        }),
-        orderBy: { startedAt: "desc" },
-        select: {
-          id: true,
-          summary: true,
-          sessionKey: true,
-          runner: {
-            select: {
-              name: true,
-            },
-          },
-        },
-      }),
-      listAggregateEvents(query),
     ]);
+
+    const visibleRunners = baseScope.runners;
+    const aggregateEvents = baseScope.events;
+    const activeSessions = runningScope.sessions.length;
+    const failedSessionCount = failedScope.sessions.length;
+    const latestFailedSession = [...failedScope.sessions].sort((left, right) => {
+      const leftTimestamp = (left.endedAt ?? left.startedAt).getTime();
+      const rightTimestamp = (right.endedAt ?? right.startedAt).getTime();
+      return rightTimestamp - leftTimestamp;
+    })[0];
 
     const offlineRunners = visibleRunners.filter((runner) => !runner.isOnline);
     const alerts: Array<{
@@ -1241,7 +1388,7 @@ export const registerV1Routes = async (app: any) => {
         detail:
           latestFailedSession?.summary ??
           (latestFailedSession
-            ? `${latestFailedSession.runner.name} most recently failed on ${latestFailedSession.sessionKey}.`
+            ? `${latestFailedSession.runnerName} most recently failed on ${latestFailedSession.sessionKey}.`
             : "One or more sessions have failed in the current fleet slice."),
         count: failedSessionCount,
         ...(latestFailedSession ? { href: `/session/${latestFailedSession.id}` } : {}),
@@ -1304,39 +1451,27 @@ export const registerV1Routes = async (app: any) => {
 
   app.get("/v1/stats", async (request: any) => {
     const query = dashboardAggregateQuerySchema.parse(request.query);
-    const since = resolveAnalyticsSince(query);
-
-    const [visibleRunners, activeSessions, sessionsLast24h, failedSessionsLast24h, aggregateEvents] = await Promise.all([
-      listAggregateRunners(query),
-      prisma.agentSession.count({
-        where: buildSessionWhere(query, {
-          ignoreSince: true,
-          ignoreStatus: true,
-          overrideStatus: "running",
-        }),
+    const [baseScope, runningScope, failedScope] = await Promise.all([
+      getAggregateScope(query),
+      getAggregateScope(query, {
+        ignoreStatus: true,
+        overrideStatus: "running",
       }),
-      prisma.agentSession.count({
-        where: buildSessionWhere(query, {
-          since,
-        }),
+      getAggregateScope(query, {
+        ignoreStatus: true,
+        overrideStatus: "failed",
       }),
-      prisma.agentSession.count({
-        where: buildSessionWhere(query, {
-          since,
-          ignoreStatus: true,
-          overrideStatus: "failed",
-        }),
-      }),
-      listAggregateEvents(query),
     ]);
+    const visibleRunners = baseScope.runners;
+    const aggregateEvents = baseScope.events;
 
     return statsResponseSchema.parse({
       totalRunners: visibleRunners.length,
       onlineRunners: visibleRunners.filter((runner) => runner.isOnline).length,
-      activeSessions,
-      sessionsLast24h,
+      activeSessions: runningScope.sessions.length,
+      sessionsLast24h: baseScope.sessions.length,
       eventsLast24h: aggregateEvents.length,
-      failedSessionsLast24h,
+      failedSessionsLast24h: failedScope.sessions.length,
     });
   });
 };

@@ -1086,6 +1086,290 @@ if (!databaseUrl) {
     assert.equal(alerts.items.some((alert) => alert.id === "runner-heartbeats"), false);
   });
 
+  test("aggregate queries include sessions that fail inside the active window after starting earlier", async () => {
+    const enrollment = await enrollRunner("aggregate-long-running-window");
+    const since = new Date(Date.now() - 6 * 60 * 60 * 1000);
+    const startedAt = new Date(Date.now() - 8 * 60 * 60 * 1000);
+    const endedAt = new Date(Date.now() - 5 * 60 * 60 * 1000);
+
+    const heartbeatResponse = await app.inject({
+      method: "POST",
+      url: "/v1/heartbeat",
+      headers: {
+        authorization: `Bearer ${enrollment.credentials.token}`,
+      },
+      payload: {
+        timestamp: heartbeatTimestamp(),
+        activeSessionCount: 0,
+      },
+    });
+    assert.equal(heartbeatResponse.statusCode, 200);
+
+    const failedSession = await prisma.agentSession.create({
+      data: {
+        runnerId: enrollment.runner.id,
+        agentType: "codex",
+        sessionKey: "aggregate-long-running-window",
+        status: "failed",
+        startedAt,
+        endedAt,
+        summary: "A long-running codex session failed inside the selected analytics window.",
+      },
+    });
+
+    await prisma.telemetryEvent.create({
+      data: {
+        runnerId: enrollment.runner.id,
+        sessionId: failedSession.id,
+        eventType: "agent.session.failed",
+        createdAt: endedAt,
+        payloadJson: {
+          timestamp: endedAt.toISOString(),
+          agentType: "codex",
+          sessionKey: failedSession.sessionKey,
+          summary: failedSession.summary,
+          category: "build",
+          status: "failed",
+        },
+      },
+    });
+
+    const queryString = `label=demo&agentType=codex&since=${encodeURIComponent(since.toISOString())}`;
+
+    const statsResponse = await app.inject({
+      method: "GET",
+      url: `/v1/stats?${queryString}`,
+    });
+    assert.equal(statsResponse.statusCode, 200);
+    assert.deepEqual(statsResponse.json(), {
+      totalRunners: 1,
+      onlineRunners: 1,
+      activeSessions: 0,
+      sessionsLast24h: 1,
+      eventsLast24h: 1,
+      failedSessionsLast24h: 1,
+    });
+
+    const alertsResponse = await app.inject({
+      method: "GET",
+      url: `/v1/alerts?${queryString}`,
+    });
+    assert.equal(alertsResponse.statusCode, 200);
+    const alerts = alertsResponse.json() as {
+      items: Array<{ id: string; href?: string; count?: number }>;
+    };
+    assert.equal(alerts.items[0]?.id, "failed-sessions");
+    assert.equal(alerts.items[0]?.href, `/session/${failedSession.id}`);
+    assert.equal(alerts.items[0]?.count, 1);
+
+    const runnerActivityResponse = await app.inject({
+      method: "GET",
+      url: `/v1/analytics/runners/activity?${queryString}`,
+    });
+    assert.equal(runnerActivityResponse.statusCode, 200);
+    assert.deepEqual(runnerActivityResponse.json(), {
+      items: [{ runnerId: enrollment.runner.id, runnerName: "aggregate-long-running-window", sessionCount: 1 }],
+    });
+  });
+
+  test("aggregate analytics include sessionless telemetry for agent-type filtered slices", async () => {
+    const enrollment = await enrollRunner("aggregate-sessionless-events");
+    const eventAt = new Date(Date.now() - 20 * 60 * 1000);
+
+    const heartbeatResponse = await app.inject({
+      method: "POST",
+      url: "/v1/heartbeat",
+      headers: {
+        authorization: `Bearer ${enrollment.credentials.token}`,
+      },
+      payload: {
+        timestamp: heartbeatTimestamp(),
+        activeSessionCount: 0,
+      },
+    });
+    assert.equal(heartbeatResponse.statusCode, 200);
+
+    await prisma.telemetryEvent.create({
+      data: {
+        runnerId: enrollment.runner.id,
+        sessionId: null,
+        eventType: "agent.prompt.executed",
+        createdAt: eventAt,
+        payloadJson: {
+          timestamp: eventAt.toISOString(),
+          agentType: "codex",
+          summary: "Sessionless telemetry should still appear in codex analytics.",
+          category: "build",
+          status: "failed",
+        },
+      },
+    });
+
+    const queryString = "label=demo&agentType=codex";
+
+    const statsResponse = await app.inject({
+      method: "GET",
+      url: `/v1/stats?${queryString}`,
+    });
+    assert.equal(statsResponse.statusCode, 200);
+    assert.deepEqual(statsResponse.json(), {
+      totalRunners: 1,
+      onlineRunners: 1,
+      activeSessions: 0,
+      sessionsLast24h: 0,
+      eventsLast24h: 1,
+      failedSessionsLast24h: 0,
+    });
+
+    const failuresResponse = await app.inject({
+      method: "GET",
+      url: `/v1/analytics/failures?${queryString}`,
+    });
+    assert.equal(failuresResponse.statusCode, 200);
+    assert.deepEqual(failuresResponse.json(), {
+      items: [{ key: "build", label: "build", count: 1 }],
+    });
+
+    const timeseriesResponse = await app.inject({
+      method: "GET",
+      url: `/v1/analytics/events/timeseries?${queryString}`,
+    });
+    assert.equal(timeseriesResponse.statusCode, 200);
+    const timeseries = timeseriesResponse.json() as { points: Array<{ count: number }> };
+    assert.equal(timeseries.points.length, 1);
+    assert.equal(timeseries.points[0]?.count, 1);
+  });
+
+  test("aggregate search keeps runner stats and alerts aligned with matching session and event data", async () => {
+    const enrollment = await enrollRunner("aggregate-search-alignment");
+    const startedAt = new Date(Date.now() - 70 * 60 * 1000);
+    const failedAt = new Date(Date.now() - 60 * 60 * 1000);
+
+    const heartbeatResponse = await app.inject({
+      method: "POST",
+      url: "/v1/heartbeat",
+      headers: {
+        authorization: `Bearer ${enrollment.credentials.token}`,
+      },
+      payload: {
+        timestamp: heartbeatTimestamp(),
+        activeSessionCount: 0,
+      },
+    });
+    assert.equal(heartbeatResponse.statusCode, 200);
+
+    const failedSession = await prisma.agentSession.create({
+      data: {
+        runnerId: enrollment.runner.id,
+        agentType: "codex",
+        sessionKey: "aggregate-search-session",
+        status: "failed",
+        startedAt,
+        endedAt: failedAt,
+        summary: "A generic failure summary that does not mention the prompt status.",
+      },
+    });
+
+    await prisma.telemetryEvent.createMany({
+      data: [
+        {
+          runnerId: enrollment.runner.id,
+          sessionId: failedSession.id,
+          eventType: "agent.prompt.executed",
+          createdAt: new Date(startedAt.getTime() + 60_000),
+          payloadJson: {
+            timestamp: new Date(startedAt.getTime() + 60_000).toISOString(),
+            agentType: "codex",
+            sessionKey: failedSession.sessionKey,
+            summary: "The build step is still blocked waiting on a fix.",
+            category: "build",
+            status: "blocked",
+          },
+        },
+        {
+          runnerId: enrollment.runner.id,
+          sessionId: failedSession.id,
+          eventType: "agent.session.failed",
+          createdAt: failedAt,
+          payloadJson: {
+            timestamp: failedAt.toISOString(),
+            agentType: "codex",
+            sessionKey: failedSession.sessionKey,
+            summary: "The session eventually failed after the build stayed blocked.",
+            category: "build",
+            status: "failed",
+          },
+        },
+      ],
+    });
+
+    const queryString = "label=demo&agentType=codex&search=blocked";
+
+    const statsResponse = await app.inject({
+      method: "GET",
+      url: `/v1/stats?${queryString}`,
+    });
+    assert.equal(statsResponse.statusCode, 200);
+    assert.equal(statsResponse.json().totalRunners, 1);
+    assert.equal(statsResponse.json().failedSessionsLast24h, 1);
+
+    const alertsResponse = await app.inject({
+      method: "GET",
+      url: `/v1/alerts?${queryString}`,
+    });
+    assert.equal(alertsResponse.statusCode, 200);
+    const alerts = alertsResponse.json() as {
+      items: Array<{ id: string; href?: string }>;
+    };
+    assert.equal(alerts.items[0]?.id, "failed-sessions");
+    assert.equal(alerts.items[0]?.href, `/session/${failedSession.id}`);
+  });
+
+  test("failure analytics ignore non-failed test-category events", async () => {
+    const enrollment = await enrollRunner("analytics-nonfailed-test");
+    const recent = new Date();
+
+    await prisma.telemetryEvent.createMany({
+      data: [
+        {
+          runnerId: enrollment.runner.id,
+          sessionId: null,
+          eventType: "agent.summary.updated",
+          createdAt: recent,
+          payloadJson: {
+            timestamp: recent.toISOString(),
+            agentType: "codex",
+            summary: "Verification is still running and has not failed.",
+            category: "test",
+            status: "verifying",
+          },
+        },
+        {
+          runnerId: enrollment.runner.id,
+          sessionId: null,
+          eventType: "agent.prompt.executed",
+          createdAt: new Date(recent.getTime() + 1_000),
+          payloadJson: {
+            timestamp: new Date(recent.getTime() + 1_000).toISOString(),
+            agentType: "codex",
+            summary: "A real build failure should still count.",
+            category: "build",
+            status: "failed",
+          },
+        },
+      ],
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/analytics/failures?agentType=codex",
+    });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), {
+      items: [{ key: "build", label: "build", count: 1 }],
+    });
+  });
+
   test("returns global event analytics in five-minute buckets", async () => {
     const enrollment = await enrollRunner("analytics-timeseries-runner");
     const bucketMs = 5 * 60 * 1000;
