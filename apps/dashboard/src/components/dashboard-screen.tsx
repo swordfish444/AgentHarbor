@@ -76,7 +76,7 @@ export function DashboardScreen({
 
       <section className="dashboard-lower-grid">
         <LiveEventFeed events={data.events} query={query} />
-        <AnalyticsPanel variant={fixtureVariant} />
+        <AnalyticsPanel analytics={data.analytics} />
       </section>
     </div>
   );

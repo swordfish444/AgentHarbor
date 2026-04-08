@@ -1,27 +1,42 @@
 import { Agent } from "undici";
 import { ensureTrailingSlashlessUrl, parseBoolean } from "@agentharbor/config";
 import {
+  analyticsBreakdownResponseSchema,
+  analyticsQuerySchema,
   eventListItemSchema,
   eventListQuerySchema,
+  eventTimeseriesResponseSchema,
   runnerListItemSchema,
+  runnerActivityResponseSchema,
   runnerListQuerySchema,
   sessionDetailSchema,
   sessionListItemSchema,
   sessionListQuerySchema,
   statsResponseSchema,
+  type AnalyticsBreakdownResponse,
   type EventListItem,
+  type EventTimeseriesResponse,
   type RunnerListItem,
+  type RunnerActivityResponse,
   type SessionDetail,
   type SessionListItem,
   type StatsResponse,
 } from "@agentharbor/shared";
 import type { DashboardFilterOptions, DashboardQuery } from "./dashboard-query";
 
+export interface DashboardAnalytics {
+  agentTypes: AnalyticsBreakdownResponse;
+  failures: AnalyticsBreakdownResponse;
+  runnerActivity: RunnerActivityResponse;
+  eventTimeseries: EventTimeseriesResponse;
+}
+
 export interface DashboardData {
   stats: StatsResponse;
   runners: RunnerListItem[];
   sessions: SessionListItem[];
   events: EventListItem[];
+  analytics: DashboardAnalytics;
 }
 
 const baseUrl = ensureTrailingSlashlessUrl(process.env.AGENTHARBOR_CONTROL_NODE_URL ?? "https://localhost:8443");
@@ -66,6 +81,19 @@ async function getJson<T>(path: string, schema: { parse: (value: unknown) => T }
 
   return schema.parse(await response.json());
 }
+
+async function getOptionalJson<T>(path: string, schema: { parse: (value: unknown) => T }, fallback: T): Promise<T> {
+  try {
+    return await getJson(path, schema);
+  } catch (error) {
+    console.warn(`Dashboard optional request failed for ${path}`, error);
+    return fallback;
+  }
+}
+
+const emptyAnalyticsBreakdown: AnalyticsBreakdownResponse = { items: [] };
+const emptyRunnerActivity: RunnerActivityResponse = { items: [] };
+const emptyEventTimeseries: EventTimeseriesResponse = { points: [] };
 
 const buildRunnerFilterOptions = (allRunners: RunnerListItem[]): DashboardFilterOptions => {
   const labels = Array.from(new Set(allRunners.flatMap((runner) => runner.labels))).sort((left, right) =>
@@ -273,6 +301,45 @@ const fetchEvents = async (
   return getJson(withQuery("/v1/events", eventQuery), eventListItemSchema.array());
 };
 
+const fetchAnalytics = async (query: DashboardQuery): Promise<DashboardAnalytics> => {
+  const analyticsQuery = analyticsQuerySchema.parse({
+    since: query.since,
+    label: query.label,
+    runnerId: query.runnerId,
+    agentType: query.agentType,
+  });
+
+  const [agentTypes, failures, runnerActivity, eventTimeseries] = await Promise.all([
+    getOptionalJson(
+      withQuery("/v1/analytics/agent-types", analyticsQuery),
+      analyticsBreakdownResponseSchema,
+      emptyAnalyticsBreakdown,
+    ),
+    getOptionalJson(
+      withQuery("/v1/analytics/failures", analyticsQuery),
+      analyticsBreakdownResponseSchema,
+      emptyAnalyticsBreakdown,
+    ),
+    getOptionalJson(
+      withQuery("/v1/analytics/runners/activity", analyticsQuery),
+      runnerActivityResponseSchema,
+      emptyRunnerActivity,
+    ),
+    getOptionalJson(
+      withQuery("/v1/analytics/events/timeseries", analyticsQuery),
+      eventTimeseriesResponseSchema,
+      emptyEventTimeseries,
+    ),
+  ]);
+
+  return {
+    agentTypes,
+    failures,
+    runnerActivity,
+    eventTimeseries,
+  };
+};
+
 export const getDashboardData = async (
   query: DashboardQuery,
 ): Promise<{ data: DashboardData; filterOptions: DashboardFilterOptions }> => {
@@ -286,10 +353,11 @@ export const getDashboardData = async (
     limit: dashboardListLimits.filterRunners,
   });
 
-  const [stats, runnerResults, allRunners] = await Promise.all([
+  const [stats, runnerResults, allRunners, analytics] = await Promise.all([
     getJson("/v1/stats", statsResponseSchema),
     getJson(withQuery("/v1/runners", runnerQuery), runnerListItemSchema.array()),
     getJson(withQuery("/v1/runners", filterOptionQuery), runnerListItemSchema.array()),
+    fetchAnalytics(query),
   ]);
 
   const labelRunnerIds = getLabelRunnerIds(allRunners, query.label);
@@ -310,6 +378,7 @@ export const getDashboardData = async (
       runners,
       sessions,
       events,
+      analytics,
     },
     filterOptions: buildRunnerFilterOptions(allRunners),
   };

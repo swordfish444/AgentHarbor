@@ -122,6 +122,48 @@ export const statsResponseSchema = z.object({
 });
 export type StatsResponse = z.infer<typeof statsResponseSchema>;
 
+export const analyticsQuerySchema = z.object({
+  since: optionalDateTimeQuerySchema,
+  label: runnerLabelSchema.optional(),
+  runnerId: optionalQueryStringSchema,
+  agentType: z.enum(agentTypes).optional(),
+});
+export type AnalyticsQuery = z.infer<typeof analyticsQuerySchema>;
+
+export const analyticsBreakdownItemSchema = z.object({
+  label: z.string().min(1),
+  count: z.number().int().nonnegative(),
+});
+export type AnalyticsBreakdownItem = z.infer<typeof analyticsBreakdownItemSchema>;
+
+export const analyticsBreakdownResponseSchema = z.object({
+  items: z.array(analyticsBreakdownItemSchema),
+});
+export type AnalyticsBreakdownResponse = z.infer<typeof analyticsBreakdownResponseSchema>;
+
+export const runnerActivityItemSchema = z.object({
+  runnerId: z.string(),
+  runnerName: z.string(),
+  count: z.number().int().nonnegative(),
+});
+export type RunnerActivityItem = z.infer<typeof runnerActivityItemSchema>;
+
+export const runnerActivityResponseSchema = z.object({
+  items: z.array(runnerActivityItemSchema),
+});
+export type RunnerActivityResponse = z.infer<typeof runnerActivityResponseSchema>;
+
+export const eventTimeseriesPointSchema = z.object({
+  bucketStart: z.string().datetime(),
+  count: z.number().int().nonnegative(),
+});
+export type EventTimeseriesPoint = z.infer<typeof eventTimeseriesPointSchema>;
+
+export const eventTimeseriesResponseSchema = z.object({
+  points: z.array(eventTimeseriesPointSchema),
+});
+export type EventTimeseriesResponse = z.infer<typeof eventTimeseriesResponseSchema>;
+
 export const runnerListQuerySchema = z.object({
   limit: limitQuerySchema,
   status: z.enum(runnerStatuses).optional(),
