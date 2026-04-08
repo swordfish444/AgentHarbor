@@ -6,6 +6,10 @@ import {
   dashboardAgentTypes,
   dashboardQueryToSearchParams,
   dashboardSessionStatuses,
+  dashboardTimePresetLabel,
+  dashboardTimePresets,
+  presetFromSince,
+  sinceIsoFromPreset,
   type DashboardFilterOptions,
   type DashboardQuery,
 } from "../lib/dashboard-query";
@@ -59,7 +63,7 @@ export function FilterBar({
           <p className="eyebrow">Filters</p>
           <h2>URL-driven dashboard state</h2>
         </div>
-        {query.since ? <span className="subtle-badge">Time window preserved from link</span> : null}
+        <span className="subtle-badge">Window: {dashboardTimePresetLabel(query.since)}</span>
       </div>
 
       <form className="filter-layout" onSubmit={submitSearch}>
@@ -124,6 +128,25 @@ export function FilterBar({
             {filterOptions.labels.map((label) => (
               <option key={label.value} value={label.value}>
                 {label.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="filter-field">
+          <label htmlFor="dashboard-window">Time window</label>
+          <select
+            id="dashboard-window"
+            onChange={(event) =>
+              updateQuery({
+                since: sinceIsoFromPreset(event.target.value as ReturnType<typeof presetFromSince>),
+              })
+            }
+            value={presetFromSince(query.since)}
+          >
+            {dashboardTimePresets.map((preset) => (
+              <option key={preset.value} value={preset.value}>
+                {preset.label}
               </option>
             ))}
           </select>

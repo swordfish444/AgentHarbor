@@ -354,7 +354,7 @@ export const getDashboardData = async (
   });
 
   const [stats, runnerResults, allRunners, analytics] = await Promise.all([
-    getJson("/v1/stats", statsResponseSchema),
+    getJson(withQuery("/v1/stats", { since: query.since }), statsResponseSchema),
     getJson(withQuery("/v1/runners", runnerQuery), runnerListItemSchema.array()),
     getJson(withQuery("/v1/runners", filterOptionQuery), runnerListItemSchema.array()),
     fetchAnalytics(query),

@@ -21,6 +21,23 @@ export interface DashboardFilterOptions {
   }>;
 }
 
+export const dashboardTimePresets = [
+  { value: "", label: "All time" },
+  { value: "15m", label: "Last 15 minutes" },
+  { value: "1h", label: "Last 1 hour" },
+  { value: "6h", label: "Last 6 hours" },
+  { value: "24h", label: "Last 24 hours" },
+] as const;
+
+type DashboardTimePresetValue = (typeof dashboardTimePresets)[number]["value"];
+
+const presetDurationsMs: Record<Exclude<DashboardTimePresetValue, "">, number> = {
+  "15m": 15 * 60 * 1000,
+  "1h": 60 * 60 * 1000,
+  "6h": 6 * 60 * 60 * 1000,
+  "24h": 24 * 60 * 60 * 1000,
+};
+
 const optionalTextSchema = z.preprocess(
   (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
   z.string().trim().min(1).optional(),
@@ -77,3 +94,46 @@ export const hasActiveDashboardFilters = (query: DashboardQuery) => Object.value
 
 export const dashboardSessionStatuses = [...sessionStatuses];
 export const dashboardAgentTypes = [...agentTypes];
+
+export const sinceIsoFromPreset = (preset: DashboardTimePresetValue) => {
+  if (preset === "") {
+    return undefined;
+  }
+
+  return new Date(Date.now() - presetDurationsMs[preset]).toISOString();
+};
+
+export const presetFromSince = (since: string | undefined): DashboardTimePresetValue => {
+  if (!since) {
+    return "";
+  }
+
+  const timestamp = new Date(since).getTime();
+  if (Number.isNaN(timestamp)) {
+    return "";
+  }
+
+  const ageMs = Date.now() - timestamp;
+  if (ageMs <= presetDurationsMs["15m"]) {
+    return "15m";
+  }
+
+  if (ageMs <= presetDurationsMs["1h"]) {
+    return "1h";
+  }
+
+  if (ageMs <= presetDurationsMs["6h"]) {
+    return "6h";
+  }
+
+  if (ageMs <= presetDurationsMs["24h"]) {
+    return "24h";
+  }
+
+  return "";
+};
+
+export const dashboardTimePresetLabel = (since: string | undefined) => {
+  const preset = presetFromSince(since);
+  return dashboardTimePresets.find((option) => option.value === preset)?.label ?? "All time";
+};
