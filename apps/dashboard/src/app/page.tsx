@@ -1,3 +1,4 @@
+import { DashboardLiveRefresh } from "../components/dashboard-live-refresh";
 import { DashboardScreen } from "../components/dashboard-screen";
 import { getDashboardData } from "../lib/control-node";
 import { normalizeDashboardQuery } from "../lib/dashboard-query";
@@ -12,6 +13,7 @@ export default async function HomePage({
 
   return (
     <main className="shell">
+      <DashboardLiveRefresh query={query} />
       <DashboardScreen data={data} filterOptions={filterOptions} query={query} />
     </main>
   );

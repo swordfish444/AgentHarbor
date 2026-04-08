@@ -39,6 +39,26 @@ export interface DashboardData {
   analytics: DashboardAnalytics;
 }
 
+export class ControlNodeRequestError extends Error {
+  status: number;
+  path: string;
+
+  constructor(path: string, status: number) {
+    super(`Control node request failed for ${path}: ${status}`);
+    this.name = "ControlNodeRequestError";
+    this.status = status;
+    this.path = path;
+  }
+}
+
+export const isControlNodeRequestError = (error: unknown): error is ControlNodeRequestError =>
+  error instanceof ControlNodeRequestError;
+
+export interface DashboardLiveStatus {
+  checkedAt: string;
+  latestEventAt: string | null;
+}
+
 const baseUrl = ensureTrailingSlashlessUrl(process.env.AGENTHARBOR_CONTROL_NODE_URL ?? "https://localhost:8443");
 const allowSelfSigned = parseBoolean(process.env.AGENTHARBOR_ALLOW_SELF_SIGNED, true);
 const dispatcher = allowSelfSigned ? new Agent({ connect: { rejectUnauthorized: false } }) : undefined;
@@ -70,13 +90,20 @@ const buildQueryString = (params: Record<string, string | number | undefined>) =
 const withQuery = (path: string, params: Record<string, string | number | undefined>) => `${path}${buildQueryString(params)}`;
 
 async function getJson<T>(path: string, schema: { parse: (value: unknown) => T }): Promise<T> {
-  const response = await fetch(`${baseUrl}${path}`, {
-    cache: "no-store",
-    dispatcher,
-  } as RequestInit & { dispatcher?: Agent });
+  let response: Response;
+
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      cache: "no-store",
+      dispatcher,
+    } as RequestInit & { dispatcher?: Agent });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown fetch failure";
+    throw new Error(`Control node request failed for ${path}: ${message}`);
+  }
 
   if (!response.ok) {
-    throw new Error(`Control node request failed for ${path}: ${response.status}`);
+    throw new ControlNodeRequestError(path, response.status);
   }
 
   return schema.parse(await response.json());
@@ -381,6 +408,22 @@ export const getDashboardData = async (
       analytics,
     },
     filterOptions: buildRunnerFilterOptions(allRunners),
+  };
+};
+
+export const getDashboardLiveStatus = async (query: DashboardQuery): Promise<DashboardLiveStatus> => {
+  const liveQuery = eventListQuerySchema.parse({
+    limit: 1,
+    agentType: query.agentType,
+    runnerId: query.runnerId,
+    since: query.since,
+    search: query.search,
+  });
+  const events = await getJson(withQuery("/v1/events", liveQuery), eventListItemSchema.array());
+
+  return {
+    checkedAt: new Date().toISOString(),
+    latestEventAt: events[0]?.createdAt ?? null,
   };
 };
 

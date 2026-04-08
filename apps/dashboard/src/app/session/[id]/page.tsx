@@ -5,7 +5,7 @@ import { SessionFailureCard } from "../../../components/session-failure-card";
 import { SessionHero } from "../../../components/session-hero";
 import { SessionSummaryCards } from "../../../components/session-summary-cards";
 import { SessionTimeline } from "../../../components/session-timeline";
-import { getSessionDetail } from "../../../lib/control-node";
+import { getSessionDetail, isControlNodeRequestError } from "../../../lib/control-node";
 
 export default async function SessionDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -30,7 +30,11 @@ export default async function SessionDetailPage({ params }: { params: Promise<{ 
         </section>
       </main>
     );
-  } catch {
-    notFound();
+  } catch (error) {
+    if (isControlNodeRequestError(error) && error.status === 404) {
+      notFound();
+    }
+
+    throw error;
   }
 }

@@ -94,7 +94,9 @@ select {
 
 .hero-filter-list,
 .tag-list,
-.list-meta {
+.list-meta,
+.live-refresh-meta,
+.route-state-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
@@ -111,6 +113,11 @@ select {
   box-shadow: var(--shadow);
   padding: 22px;
   backdrop-filter: blur(10px);
+}
+
+.loading-shell {
+  display: grid;
+  gap: 20px;
 }
 
 .hero-meta {
@@ -171,6 +178,49 @@ select {
   color: var(--muted);
   font-size: 0.82rem;
   white-space: nowrap;
+}
+
+.live-refresh-banner {
+  margin-bottom: 20px;
+}
+
+.live-refresh-connecting {
+  border-color: rgba(74, 194, 255, 0.22);
+}
+
+.live-refresh-reconnecting {
+  border-color: rgba(245, 201, 106, 0.26);
+}
+
+.live-refresh-disconnected {
+  border-color: rgba(255, 122, 122, 0.26);
+  background: linear-gradient(180deg, rgba(49, 18, 22, 0.94), rgba(26, 12, 18, 0.96));
+}
+
+.live-refresh-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.live-refresh-pill-connecting,
+.live-refresh-pill-connected {
+  background: rgba(74, 194, 255, 0.14);
+  color: var(--accent);
+}
+
+.live-refresh-pill-reconnecting {
+  background: rgba(245, 201, 106, 0.16);
+  color: var(--warning);
+}
+
+.live-refresh-pill-disconnected {
+  background: rgba(255, 122, 122, 0.16);
+  color: var(--danger);
 }
 
 .dashboard-main-grid {
@@ -345,6 +395,12 @@ td strong,
   border-color: rgba(74, 194, 255, 0.22);
 }
 
+.tag-danger {
+  color: var(--danger);
+  border-color: rgba(255, 122, 122, 0.22);
+  background: rgba(255, 122, 122, 0.12);
+}
+
 .list-card,
 .event-card,
 .alert-card,
@@ -485,6 +541,76 @@ td strong,
   border: 1px dashed rgba(132, 195, 232, 0.18);
   border-radius: 18px;
   background: rgba(8, 20, 34, 0.64);
+}
+
+.route-state-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.route-state-error {
+  border-color: rgba(255, 122, 122, 0.26);
+  background: linear-gradient(180deg, rgba(46, 17, 21, 0.94), rgba(22, 10, 15, 0.96));
+}
+
+.route-state-copy {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.route-action-link {
+  display: inline-flex;
+  align-items: center;
+}
+
+.skeleton-card,
+.skeleton-stack,
+.skeleton-table {
+  display: grid;
+  gap: 14px;
+}
+
+.skeleton-line {
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    rgba(132, 195, 232, 0.08),
+    rgba(132, 195, 232, 0.18),
+    rgba(132, 195, 232, 0.08)
+  );
+  background-size: 200% 100%;
+  animation: dashboard-shimmer 1.4s ease-in-out infinite;
+}
+
+.skeleton-line-label {
+  width: 28%;
+  height: 12px;
+}
+
+.skeleton-line-title {
+  width: 52%;
+  height: 18px;
+}
+
+.skeleton-line-body {
+  width: 100%;
+  height: 14px;
+}
+
+.skeleton-line-body.short {
+  width: 68%;
+}
+
+.skeleton-line-metric {
+  width: 46%;
+  height: 38px;
+}
+
+.skeleton-line-row {
+  width: 100%;
+  height: 52px;
+  border-radius: 18px;
 }
 
 .empty-state a,
@@ -640,6 +766,16 @@ td strong,
   color: #cfe7ff;
   overflow-x: auto;
   font: 0.82rem/1.55 "IBM Plex Mono", "Cascadia Code", monospace;
+}
+
+@keyframes dashboard-shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: -100% 50%;
+  }
 }
 
 @media (max-width: 1440px) {
