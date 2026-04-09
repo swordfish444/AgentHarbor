@@ -416,6 +416,8 @@ export const getDashboardLiveStatus = async (query: DashboardQuery): Promise<Das
     limit: 1,
     agentType: query.agentType,
     runnerId: query.runnerId,
+    status: query.status,
+    label: query.label,
     since: query.since,
     search: query.search,
   });

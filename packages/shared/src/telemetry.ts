@@ -12,6 +12,9 @@ export const eventCategories = [
   "network",
   "auth",
   "failure",
+  "timeout",
+  "human-approval",
+  "unknown",
   "recovery",
 ] as const;
 export type EventCategory = (typeof eventCategories)[number];
@@ -188,6 +191,8 @@ export const eventListQuerySchema = z.object({
   agentType: z.enum(agentTypes).optional(),
   runnerId: optionalQueryStringSchema,
   sessionId: optionalQueryStringSchema,
+  status: z.enum(sessionStatuses).optional(),
+  label: runnerLabelSchema.optional(),
   since: optionalDateTimeQuerySchema,
   search: optionalQueryStringSchema,
 });

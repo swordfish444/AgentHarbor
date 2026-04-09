@@ -76,6 +76,7 @@ if (!databaseUrl) {
 
   test("enrolls runners, tracks heartbeats, and filters runners by status and label", async () => {
     const enrollment = await enrollRunner("backend-runner-online");
+    const heartbeatTimestamp = new Date().toISOString();
 
     assert.deepEqual(enrollment.runner.labels, ["demo", "backend"]);
     assert.equal(enrollment.runner.environment, "demo");
@@ -87,7 +88,7 @@ if (!databaseUrl) {
         authorization: `Bearer ${enrollment.credentials.token}`,
       },
       payload: {
-        timestamp: "2026-04-02T20:00:00.000Z",
+        timestamp: heartbeatTimestamp,
         activeSessionCount: 0,
         metadata: {
           mode: "test",
@@ -250,6 +251,151 @@ if (!databaseUrl) {
     assert.equal(failedEvents[0]?.eventType, "agent.session.failed");
     assert.equal(failedEvents[0]?.payload.category, "failure");
     assert.equal(failedEvents[0]?.payload.status, "failed");
+
+    const failedScopedEventsResponse = await app.inject({
+      method: "GET",
+      url: "/v1/events?status=failed&label=demo&limit=10",
+    });
+    assert.equal(failedScopedEventsResponse.statusCode, 200);
+
+    const failedScopedEvents = failedScopedEventsResponse.json() as Array<{
+      sessionKey: string | null;
+    }>;
+    assert.equal(failedScopedEvents.length, 3);
+    assert.ok(failedScopedEvents.every((event) => event.sessionKey === "session-failed"));
+
+    const analyticsSince = "2026-04-02T20:00:00.000Z";
+
+    const agentTypesResponse = await app.inject({
+      method: "GET",
+      url: `/v1/analytics/agent-types?runnerId=${enrollment.runner.id}&since=${encodeURIComponent(analyticsSince)}`,
+    });
+    assert.equal(agentTypesResponse.statusCode, 200);
+    assert.deepEqual(agentTypesResponse.json(), {
+      items: [{ label: "codex", count: 2 }],
+    });
+
+    const failuresResponse = await app.inject({
+      method: "GET",
+      url: `/v1/analytics/failures?runnerId=${enrollment.runner.id}&since=${encodeURIComponent(analyticsSince)}`,
+    });
+    assert.equal(failuresResponse.statusCode, 200);
+    assert.deepEqual(failuresResponse.json(), {
+      items: [
+        { label: "build", count: 1 },
+        { label: "failure", count: 1 },
+      ],
+    });
+
+    const runnerActivityResponse = await app.inject({
+      method: "GET",
+      url: `/v1/analytics/runners/activity?runnerId=${enrollment.runner.id}&since=${encodeURIComponent(analyticsSince)}`,
+    });
+    assert.equal(runnerActivityResponse.statusCode, 200);
+    assert.deepEqual(runnerActivityResponse.json(), {
+      items: [
+        {
+          runnerId: enrollment.runner.id,
+          runnerName: "backend-runner-telemetry",
+          count: 2,
+        },
+      ],
+    });
+
+    const timeseriesResponse = await app.inject({
+      method: "GET",
+      url: `/v1/analytics/events/timeseries?runnerId=${enrollment.runner.id}&since=${encodeURIComponent(analyticsSince)}`,
+    });
+    assert.equal(timeseriesResponse.statusCode, 200);
+    assert.deepEqual(timeseriesResponse.json(), {
+      points: [{ bucketStart: "2026-04-02T20:05:00.000Z", count: 6 }],
+    });
+  });
+
+  test("accepts previously supported telemetry categories during ingest and preserves them in reads", async () => {
+    const enrollment = await enrollRunner("backend-runner-compat");
+    const token = enrollment.credentials.token;
+
+    await postTelemetry(token, [
+      {
+        eventType: "agent.session.started",
+        payload: {
+          timestamp: "2026-04-02T20:10:00.000Z",
+          agentType: "codex",
+          sessionKey: "session-compat",
+          summary: "Started a legacy-compatible task.",
+          category: "session",
+          status: "running",
+        },
+      },
+      {
+        eventType: "agent.prompt.executed",
+        payload: {
+          timestamp: "2026-04-02T20:10:10.000Z",
+          agentType: "codex",
+          sessionKey: "session-compat",
+          summary: "Timed out while waiting for an approval gate.",
+          category: "timeout",
+          status: "blocked",
+        },
+      },
+      {
+        eventType: "agent.session.failed",
+        payload: {
+          timestamp: "2026-04-02T20:10:20.000Z",
+          agentType: "codex",
+          sessionKey: "session-compat",
+          summary: "Session failed because the required approval never arrived.",
+          category: "human-approval",
+          status: "failed",
+        },
+      },
+    ]);
+
+    const compatibilityEventsResponse = await app.inject({
+      method: "GET",
+      url: "/v1/events?search=session-compat",
+    });
+    assert.equal(compatibilityEventsResponse.statusCode, 200);
+
+    const compatibilityEvents = compatibilityEventsResponse.json() as Array<{
+      payload: {
+        category?: string;
+      };
+    }>;
+    assert.deepEqual(
+      compatibilityEvents.map((event) => event.payload.category),
+      ["human-approval", "timeout", "session"],
+    );
+
+    const sessionsResponse = await app.inject({
+      method: "GET",
+      url: `/v1/sessions?runnerId=${enrollment.runner.id}&search=session-compat`,
+    });
+    assert.equal(sessionsResponse.statusCode, 200);
+
+    const sessions = sessionsResponse.json() as Array<{
+      id: string;
+    }>;
+    assert.equal(sessions.length, 1);
+
+    const sessionDetailResponse = await app.inject({
+      method: "GET",
+      url: `/v1/sessions/${sessions[0]?.id}`,
+    });
+    assert.equal(sessionDetailResponse.statusCode, 200);
+
+    const sessionDetail = sessionDetailResponse.json() as {
+      events: Array<{
+        payload: {
+          category?: string;
+        };
+      }>;
+    };
+    assert.deepEqual(
+      sessionDetail.events.map((event) => event.payload.category),
+      ["session", "timeout", "human-approval"],
+    );
   });
 
   test("accepts legacy stored payload categories when listing events and session detail", async () => {

@@ -1,10 +1,14 @@
 import type { Prisma } from "@prisma/client";
 import {
   agentTypes,
+  analyticsBreakdownResponseSchema,
+  analyticsQuerySchema,
   eventCategories,
+  eventTimeseriesResponseSchema,
   eventListQuerySchema,
   heartbeatRequestSchema,
   runnerEnrollmentRequestSchema,
+  runnerActivityResponseSchema,
   runnerListQuerySchema,
   sessionDetailSchema,
   sessionListQuerySchema,
@@ -52,6 +56,21 @@ const normalizeRunnerStatus = (runner: { status: string; lastSeenAt: Date | null
 
 const includesSearch = (value: string | null | undefined, search: string) =>
   Boolean(value?.toLowerCase().includes(search.toLowerCase()));
+
+const analyticsWindowMs = 24 * 60 * 60 * 1000;
+const analyticsEventPageSize = 250;
+const eventTimeseriesBucketMs = 5 * 60 * 1000;
+const runnerActivityLimit = 10;
+const failureAnalyticsCategories = new Set<(typeof eventCategories)[number]>([
+  "build",
+  "test",
+  "auth",
+  "network",
+  "failure",
+  "timeout",
+  "human-approval",
+  "unknown",
+]);
 
 const legacyTelemetryEventPayloadSchema = z
   .object({
@@ -147,6 +166,28 @@ type EventListRecord = {
     sessionKey: string;
   } | null;
 };
+
+type AnalyticsQuery = z.infer<typeof analyticsQuerySchema>;
+
+const analyticsEventInclude = {
+  runner: {
+    select: {
+      name: true,
+    },
+  },
+  session: {
+    select: {
+      id: true,
+      agentType: true,
+      sessionKey: true,
+      status: true,
+    },
+  },
+} satisfies Prisma.TelemetryEventInclude;
+
+type AnalyticsEventRecord = Prisma.TelemetryEventGetPayload<{
+  include: typeof analyticsEventInclude;
+}>;
 
 const serializeRunner = (runner: RunnerListRecord) => ({
   id: runner.id,
@@ -253,12 +294,126 @@ const eventMatchesFilters = (
       includesSearch(event.runnerName, query.search) ||
       includesSearch(event.sessionKey, query.search) ||
       includesSearch(event.payload.summary, query.search) ||
-      includesSearch(event.payload.category ?? null, query.search)
+      includesSearch(event.payload.category ?? null, query.search) ||
+      includesSearch(event.payload.status ?? null, query.search)
     );
   }
 
   return true;
 };
+
+const resolveAnalyticsSince = (query: { since?: string }) =>
+  new Date(query.since ?? Date.now() - analyticsWindowMs);
+
+const buildAnalyticsSessionWhere = (query: AnalyticsQuery) => {
+  const filters: Prisma.AgentSessionWhereInput[] = [];
+  const since = query.since ? new Date(query.since) : undefined;
+
+  if (query.agentType) {
+    filters.push({ agentType: query.agentType });
+  }
+
+  if (query.runnerId) {
+    filters.push({ runnerId: query.runnerId });
+  }
+
+  if (query.label) {
+    filters.push({
+      runner: {
+        is: {
+          labels: {
+            has: query.label,
+          },
+        },
+      },
+    });
+  }
+
+  if (since) {
+    filters.push({
+      OR: [
+        { startedAt: { gte: since } },
+        { endedAt: { gte: since } },
+        { AND: [{ endedAt: null }, { status: "running" }] },
+      ],
+    });
+  }
+
+  return filters.length > 0 ? { AND: filters } : {};
+};
+
+const buildAnalyticsEventWhere = (query: AnalyticsQuery, since: Date): Prisma.TelemetryEventWhereInput => ({
+  ...(query.runnerId ? { runnerId: query.runnerId } : {}),
+  ...(query.label
+    ? {
+        runner: {
+          is: {
+            labels: {
+              has: query.label,
+            },
+          },
+        },
+      }
+    : {}),
+  createdAt: { gte: since },
+});
+
+const scanAnalyticsEvents = async (
+  query: AnalyticsQuery,
+  onMatch: (event: AnalyticsEventRecord & { payload: ReturnType<typeof normalizeStoredPayload> }) => void,
+) => {
+  const since = resolveAnalyticsSince(query);
+  let skip = 0;
+
+  while (true) {
+    const events = await prisma.telemetryEvent.findMany({
+      where: buildAnalyticsEventWhere(query, since),
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      skip,
+      take: analyticsEventPageSize,
+      include: analyticsEventInclude,
+    });
+
+    if (events.length === 0) {
+      break;
+    }
+
+    for (const event of events) {
+      const payload = normalizeStoredPayload(event.payloadJson, event.createdAt);
+      if (query.agentType && payload.agentType !== query.agentType && event.session?.agentType !== query.agentType) {
+        continue;
+      }
+
+      onMatch({
+        ...event,
+        payload,
+      });
+    }
+
+    skip += events.length;
+
+    if (events.length < analyticsEventPageSize) {
+      break;
+    }
+  }
+};
+
+const toAnalyticsBreakdown = (counts: Map<string, number>) =>
+  [...counts.entries()]
+    .map(([label, count]) => ({
+      label,
+      count,
+    }))
+    .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label));
+
+const isFailureAnalyticsEvent = (
+  eventType: string,
+  payload: ReturnType<typeof normalizeStoredPayload>,
+) =>
+  eventType === "agent.session.failed" ||
+  payload.status === "failed" ||
+  payload.status === "blocked" ||
+  Boolean(payload.status == null && payload.category && failureAnalyticsCategories.has(payload.category));
 
 const syncSessionForEvent = async (
   tx: Prisma.TransactionClient,
@@ -588,6 +743,26 @@ export const registerV1Routes = async (app: any) => {
       ...(query.eventType ? { eventType: query.eventType } : {}),
       ...(query.runnerId ? { runnerId: query.runnerId } : {}),
       ...(query.sessionId ? { sessionId: query.sessionId } : {}),
+      ...(query.status
+        ? {
+            session: {
+              is: {
+                status: query.status,
+              },
+            },
+          }
+        : {}),
+      ...(query.label
+        ? {
+            runner: {
+              is: {
+                labels: {
+                  has: query.label,
+                },
+              },
+            },
+          }
+        : {}),
       ...(query.since ? { createdAt: { gte: new Date(query.since) } } : {}),
     };
     const filteredEvents: Array<ReturnType<typeof serializeEvent>> = [];
@@ -622,6 +797,99 @@ export const registerV1Routes = async (app: any) => {
     }
 
     return filteredEvents.slice(0, limit);
+  });
+
+  app.get("/v1/analytics/agent-types", async (request: any) => {
+    const query = analyticsQuerySchema.parse(request.query);
+    const sessions = await prisma.agentSession.findMany({
+      where: buildAnalyticsSessionWhere(query),
+      select: {
+        agentType: true,
+      },
+    });
+    const counts = new Map<string, number>();
+
+    for (const session of sessions) {
+      counts.set(session.agentType, (counts.get(session.agentType) ?? 0) + 1);
+    }
+
+    return analyticsBreakdownResponseSchema.parse({
+      items: toAnalyticsBreakdown(counts),
+    });
+  });
+
+  app.get("/v1/analytics/failures", async (request: any) => {
+    const query = analyticsQuerySchema.parse(request.query);
+    const counts = new Map<string, number>();
+
+    await scanAnalyticsEvents(query, (event) => {
+      if (!isFailureAnalyticsEvent(event.eventType, event.payload)) {
+        return;
+      }
+
+      const category = event.payload.category ?? "unknown";
+      counts.set(category, (counts.get(category) ?? 0) + 1);
+    });
+
+    return analyticsBreakdownResponseSchema.parse({
+      items: toAnalyticsBreakdown(counts),
+    });
+  });
+
+  app.get("/v1/analytics/runners/activity", async (request: any) => {
+    const query = analyticsQuerySchema.parse(request.query);
+    const sessions = await prisma.agentSession.findMany({
+      where: buildAnalyticsSessionWhere(query),
+      select: {
+        runnerId: true,
+        runner: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    });
+    const counts = new Map<string, { runnerName: string; count: number }>();
+
+    for (const session of sessions) {
+      const current = counts.get(session.runnerId) ?? {
+        runnerName: session.runner.name,
+        count: 0,
+      };
+
+      current.count += 1;
+      counts.set(session.runnerId, current);
+    }
+
+    return runnerActivityResponseSchema.parse({
+      items: [...counts.entries()]
+        .map(([runnerId, value]) => ({
+          runnerId,
+          runnerName: value.runnerName,
+          count: value.count,
+        }))
+        .sort((left, right) => right.count - left.count || left.runnerName.localeCompare(right.runnerName))
+        .slice(0, runnerActivityLimit),
+    });
+  });
+
+  app.get("/v1/analytics/events/timeseries", async (request: any) => {
+    const query = analyticsQuerySchema.parse(request.query);
+    const counts = new Map<number, number>();
+
+    await scanAnalyticsEvents(query, (event) => {
+      const bucketStart = Math.floor(event.createdAt.getTime() / eventTimeseriesBucketMs) * eventTimeseriesBucketMs;
+      counts.set(bucketStart, (counts.get(bucketStart) ?? 0) + 1);
+    });
+
+    return eventTimeseriesResponseSchema.parse({
+      points: [...counts.entries()]
+        .map(([bucketStart, count]) => ({
+          bucketStart: new Date(bucketStart).toISOString(),
+          count,
+        }))
+        .sort((left, right) => left.bucketStart.localeCompare(right.bucketStart)),
+    });
   });
 
   app.get("/v1/stats", async () => {
