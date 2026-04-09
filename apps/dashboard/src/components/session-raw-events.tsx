@@ -18,9 +18,18 @@ export function SessionRawEvents({ events }: { events: EventListItem[] }) {
           <p>As structured telemetry arrives, the full event history will appear here.</p>
         </div>
       ) : (
-        <div className="stack-list">
+        <div className="event-feed event-feed-raw">
           {events.map((event) => (
-            <div className="list-card raw-event-card" key={event.id}>
+            <div
+              className={`list-card raw-event-card ${
+                event.eventType === "agent.session.failed" ||
+                event.payload.status === "failed" ||
+                event.payload.status === "blocked"
+                  ? "list-card-critical"
+                  : ""
+              }`}
+              key={event.id}
+            >
               <div className="list-title-row">
                 <strong>{humanizeEventType(event.eventType)}</strong>
                 <span className="row-meta">{formatDateTime(event.createdAt)}</span>
@@ -33,6 +42,7 @@ export function SessionRawEvents({ events }: { events: EventListItem[] }) {
                 <span>{event.payload.filesTouchedCount ?? 0} files</span>
                 <span>{event.payload.durationMs ?? 0} ms</span>
               </div>
+              <pre className="payload-preview">{JSON.stringify(event.payload, null, 2)}</pre>
             </div>
           ))}
         </div>

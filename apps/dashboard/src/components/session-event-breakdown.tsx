@@ -1,5 +1,5 @@
 import type { SessionDetail } from "@agentharbor/shared";
-import { humanizeCategory, humanizeEventType } from "../lib/formatters";
+import { formatInteger, formatTokenUsage, humanizeCategory, humanizeEventType } from "../lib/formatters";
 import { SimpleBarChart } from "./simple-bar-chart";
 
 const countBy = (labels: string[]) => {
@@ -24,6 +24,8 @@ const countBy = (labels: string[]) => {
 export function SessionEventBreakdown({ session }: { session: SessionDetail }) {
   const eventTypePoints = countBy(session.events.map((event) => humanizeEventType(event.eventType)));
   const categoryPoints = countBy(session.events.map((event) => humanizeCategory(event.payload.category)));
+  const peakTokenCheckpoint = Math.max(...session.events.map((event) => event.payload.tokenUsage ?? 0), 0);
+  const peakFilesCheckpoint = Math.max(...session.events.map((event) => event.payload.filesTouchedCount ?? 0), 0);
 
   return (
     <article className="panel">
@@ -31,6 +33,25 @@ export function SessionEventBreakdown({ session }: { session: SessionDetail }) {
         <div>
           <p className="eyebrow">Event Breakdown</p>
           <h2>What happened most often</h2>
+        </div>
+      </div>
+
+      <div className="summary-grid summary-grid-compact">
+        <div className="summary-card">
+          <span className="row-meta">Total Events</span>
+          <strong>{formatInteger(session.eventCount)}</strong>
+        </div>
+        <div className="summary-card">
+          <span className="row-meta">Session Tokens</span>
+          <strong>{formatTokenUsage(session.tokenUsage)}</strong>
+        </div>
+        <div className="summary-card">
+          <span className="row-meta">Peak Token Checkpoint</span>
+          <strong>{formatInteger(peakTokenCheckpoint)} tokens</strong>
+        </div>
+        <div className="summary-card">
+          <span className="row-meta">Peak Files Checkpoint</span>
+          <strong>{formatInteger(peakFilesCheckpoint)} files</strong>
         </div>
       </div>
 
