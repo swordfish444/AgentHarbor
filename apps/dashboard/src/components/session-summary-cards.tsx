@@ -1,5 +1,6 @@
 import type { SessionDetail } from "@agentharbor/shared";
-import { formatDateTime, formatInteger } from "../lib/formatters";
+import { formatDateTime, formatInteger, formatTokenUsage } from "../lib/formatters";
+import { StatusPill } from "./status-pill";
 
 export function SessionSummaryCards({ session }: { session: SessionDetail }) {
   return (
@@ -21,12 +22,24 @@ export function SessionSummaryCards({ session }: { session: SessionDetail }) {
           <strong>{session.runnerName}</strong>
         </div>
         <div className="summary-card">
+          <span className="row-meta">Agent Type</span>
+          <strong>{session.agentType}</strong>
+        </div>
+        <div className="summary-card">
+          <span className="row-meta">Status</span>
+          <StatusPill status={session.status} />
+        </div>
+        <div className="summary-card">
           <span className="row-meta">Files Touched</span>
           <strong>{formatInteger(session.filesTouchedCount)}</strong>
         </div>
         <div className="summary-card">
           <span className="row-meta">Events</span>
           <strong>{formatInteger(session.eventCount)}</strong>
+        </div>
+        <div className="summary-card">
+          <span className="row-meta">Token Usage</span>
+          <strong>{formatTokenUsage(session.tokenUsage)}</strong>
         </div>
         <div className="summary-card">
           <span className="row-meta">Ended</span>
