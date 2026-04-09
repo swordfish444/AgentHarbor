@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { formatDateTime } from "../lib/formatters";
+import { parseStreamMetadata } from "../lib/live-refresh";
 
 const refreshEventTypes = ["runner.heartbeat", "telemetry.created", "session.updated", "stats.refresh"] as const;
 type ConnectionState = "connecting" | "connected" | "reconnecting" | "degraded";
@@ -24,21 +25,6 @@ const statusCopy: Record<ConnectionState, { title: string; detail: string }> = {
     title: "Disconnected",
     detail: "The stream has been unavailable long enough that the dashboard may be showing an older snapshot.",
   },
-};
-
-const parseStreamMetadata = (rawPayload: string, fallbackType: string) => {
-  try {
-    const payload = JSON.parse(rawPayload) as { emittedAt?: string; type?: string };
-    return {
-      emittedAt: typeof payload.emittedAt === "string" ? payload.emittedAt : new Date().toISOString(),
-      type: typeof payload.type === "string" ? payload.type : fallbackType,
-    };
-  } catch {
-    return {
-      emittedAt: new Date().toISOString(),
-      type: fallbackType,
-    };
-  }
 };
 
 export function DashboardLiveRefresh() {
