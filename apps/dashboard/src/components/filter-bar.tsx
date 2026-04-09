@@ -60,10 +60,10 @@ export function FilterBar({
     <section className="panel">
       <div className="section-header">
         <div>
-          <p className="eyebrow">Filters</p>
-          <h2>URL-driven dashboard state</h2>
+          <p className="eyebrow">View controls</p>
+          <h2>Focus the screen</h2>
         </div>
-        {query.since ? <span className="subtle-badge">Time window active</span> : <span className="subtle-badge">24-hour analytics default</span>}
+        {query.since ? <span className="subtle-badge">Filtered view</span> : <span className="subtle-badge">Default overview</span>}
       </div>
 
       <form className="filter-layout" onSubmit={submitSearch}>

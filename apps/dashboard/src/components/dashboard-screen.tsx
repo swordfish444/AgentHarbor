@@ -1,18 +1,15 @@
+import Link from "next/link";
 import type { DashboardData } from "../lib/control-node";
-import { formatDateTime } from "../lib/formatters";
+import { formatDateTime, formatTime } from "../lib/formatters";
 import {
   dashboardTimeRangeOptions,
   hasActiveDashboardFilters,
   type DashboardFilterOptions,
   type DashboardQuery,
 } from "../lib/dashboard-query";
-import { AlertRail } from "./alert-rail";
-import { AnalyticsPanel } from "./analytics-panel";
 import { FilterBar } from "./filter-bar";
-import { FleetTable } from "./fleet-table";
-import { LiveEventFeed } from "./live-event-feed";
-import { MetricsStrip } from "./metrics-strip";
-import { SessionList } from "./session-list";
+import { MetricCard } from "./metric-card";
+import { OperatorConsole } from "./operator-console";
 
 export function DashboardScreen({
   data,
@@ -35,16 +32,29 @@ export function DashboardScreen({
     query.search ? `Search: ${query.search}` : null,
     selectedTimeRangeLabel ? `Window: ${selectedTimeRangeLabel}` : query.since ? `Since: ${formatDateTime(query.since)}` : null,
   ].filter(Boolean) as string[];
+  const latestSignalAt =
+    data.events[0]?.createdAt ??
+    data.sessions[0]?.startedAt ??
+    [...data.runners]
+      .map((runner) => runner.lastSeenAt)
+      .filter((value): value is string => Boolean(value))
+      .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] ??
+    null;
+  const attentionCount = Math.max(
+    data.sessions.filter((session) => session.status === "failed").length,
+    data.alerts.filter((alert) => alert.severity === "critical").length,
+  );
+  const heroAlerts = data.alerts.slice(0, 2);
 
   return (
-    <div className="dashboard-stack">
-      <section className="hero">
+    <div className="dashboard-stack dashboard-stack-focused">
+      <section className="hero hero-briefing">
         <div>
-          <p className="eyebrow">AgentHarbor</p>
-          <h1>Control tower visibility for AI agents spread across your fleet.</h1>
+          <p className="eyebrow">Live operator view</p>
+          <h1>Monitor every coding agent from one screen.</h1>
           <p className="hero-copy">
-            The dashboard is now reading live fleet stats, analytics, and operator alerts from the control node so the
-            view stays anchored to the same slice of sessions, runners, and telemetry throughout the screen.
+            Built for a large demo monitor: fleet table first, spotlight second, full session drilldowns only when you
+            click into the work that matters.
           </p>
           {filtered ? (
             <div className="hero-filter-list">
@@ -54,42 +64,68 @@ export function DashboardScreen({
                 </span>
               ))}
             </div>
-          ) : null}
+          ) : (
+            <div className="hero-filter-list">
+              <span className="tag">Click an agent row to inspect it</span>
+              <span className="tag">Presentation-first overview</span>
+              <span className="tag">Single-screen control tower</span>
+            </div>
+          )}
         </div>
-        <div className="hero-meta panel">
-          <div className="hero-meta-block">
-            <p className="eyebrow">Snapshot</p>
-            <p>{data.runners.length} runners visible</p>
-            <p>{data.sessions.length} sessions visible</p>
-            <p>{data.events.length} events visible</p>
-          </div>
-          <div className="hero-meta-block">
-            <p className="eyebrow">Filters</p>
-            <p>{filtered ? "URL filters active" : "Viewing the full dashboard slice"}</p>
-            {selectedTimeRangeLabel ? (
-              <p>Rolling window: {selectedTimeRangeLabel}</p>
-            ) : query.since ? (
-              <p>Window starts {formatDateTime(query.since)}</p>
+        <div className="hero-briefing-stack">
+          <div className="hero-callout-grid">
+            {heroAlerts.length > 0 ? (
+              heroAlerts.map((alert) =>
+                alert.href ? (
+                  <Link className={`alert-card alert-card-interactive severity-${alert.severity}`} href={alert.href} key={alert.id}>
+                    <span className="alert-severity">{alert.severity}</span>
+                    <strong>{alert.title}</strong>
+                    <p>{alert.detail}</p>
+                  </Link>
+                ) : (
+                  <article className={`alert-card severity-${alert.severity}`} key={alert.id}>
+                    <span className="alert-severity">{alert.severity}</span>
+                    <strong>{alert.title}</strong>
+                    <p>{alert.detail}</p>
+                  </article>
+                ),
+              )
             ) : (
-              <p>Using the default 24-hour analytics window</p>
+              <article className="alert-card severity-info">
+                <span className="alert-severity">info</span>
+                <strong>Fleet is quiet right now</strong>
+                <p>Once new runner telemetry lands, operator attention items will surface here.</p>
+              </article>
             )}
           </div>
         </div>
       </section>
 
-      <MetricsStrip hasActiveFilters={filtered} stats={data.stats} />
-      <AlertRail alerts={data.alerts} />
+      <section className="metrics-grid metrics-grid-focused">
+        <MetricCard
+          detail="Agents represented on this screen."
+          label="Agents Visible"
+          value={`${data.runners.length}`}
+        />
+        <MetricCard
+          detail="Sessions still reported as actively running."
+          label="Running Now"
+          value={`${data.stats.activeSessions}`}
+        />
+        <MetricCard
+          detail="Failures or critical states worth operator attention."
+          label="Need Attention"
+          value={`${attentionCount}`}
+        />
+        <MetricCard
+          detail={latestSignalAt ? formatDateTime(latestSignalAt) : "Awaiting first telemetry signal."}
+          label="Latest Signal"
+          value={latestSignalAt ? formatTime(latestSignalAt) : "--"}
+        />
+      </section>
+
       <FilterBar filterOptions={filterOptions} query={query} />
-
-      <section className="dashboard-main-grid">
-        <FleetTable query={query} runnerGroups={data.runnerGroups} runners={data.runners} />
-        <SessionList query={query} sessions={data.sessions} />
-      </section>
-
-      <section className="dashboard-lower-grid">
-        <LiveEventFeed events={data.events} query={query} />
-        <AnalyticsPanel analytics={data.analytics} />
-      </section>
+      <OperatorConsole data={data} />
     </div>
   );
 }

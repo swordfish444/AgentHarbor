@@ -31,6 +31,44 @@ export const formatTime = (value: string | null | undefined) => {
   }).format(date);
 };
 
+export const formatRelativeTime = (value: string | null | undefined, now = Date.now()) => {
+  if (!value) {
+    return "No recent signal";
+  }
+
+  const timestamp = new Date(value).getTime();
+
+  if (Number.isNaN(timestamp)) {
+    return value;
+  }
+
+  const deltaMs = Math.max(0, now - timestamp);
+  const deltaSeconds = Math.round(deltaMs / 1_000);
+
+  if (deltaSeconds < 10) {
+    return "Just now";
+  }
+
+  if (deltaSeconds < 60) {
+    return `${deltaSeconds}s ago`;
+  }
+
+  const deltaMinutes = Math.round(deltaSeconds / 60);
+
+  if (deltaMinutes < 60) {
+    return `${deltaMinutes}m ago`;
+  }
+
+  const deltaHours = Math.round(deltaMinutes / 60);
+
+  if (deltaHours < 24) {
+    return `${deltaHours}h ago`;
+  }
+
+  const deltaDays = Math.round(deltaHours / 24);
+  return `${deltaDays}d ago`;
+};
+
 export const formatDurationMs = (value: number | null | undefined, fallback = "Running") => {
   if (value == null) {
     return fallback;
@@ -82,3 +120,6 @@ export const humanizeCategory = (category: string | null | undefined, fallback =
         .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
         .join(" ")
     : fallback;
+
+export const humanizeAgentType = (agentType: string | null | undefined, fallback = "Unknown") =>
+  humanizeCategory(agentType, fallback);
