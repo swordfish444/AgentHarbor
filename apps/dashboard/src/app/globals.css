@@ -1174,6 +1174,15 @@ td strong,
   font-size: 0.82rem;
 }
 
+.agent-detail-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.agent-detail-link:hover {
+  color: #9cdcff;
+}
+
 .monitor-empty-row {
   color: var(--muted);
   text-align: center;

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { EventListItem, RunnerListItem, SessionListItem, StreamEvent } from "@agentharbor/shared";
 import type { DashboardData } from "../lib/control-node";
@@ -122,22 +123,47 @@ const buildAgentRows = (data: DashboardData): AgentRow[] => {
 };
 
 const buildChatEntries = (data: DashboardData): ChatEntry[] =>
-  dedupeById(data.events.filter(isChatworthyEvent))
-    .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime())
-    .slice(-32)
-    .map((event) => {
-      const color = getRunnerColor(event.runnerId);
+  {
+    const eventEntries = dedupeById(data.events.filter(isChatworthyEvent))
+      .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime())
+      .slice(-32)
+      .map((event) => {
+        const color = getRunnerColor(event.runnerId);
 
-      return {
-        id: event.id,
-        runnerId: event.runnerId,
-        runnerName: event.runnerName,
-        accent: color.solid,
-        accentSoft: color.soft,
-        createdAt: event.createdAt,
-        message: event.payload.summary?.trim() ?? "Reported structured telemetry.",
-      };
-    });
+        return {
+          id: event.id,
+          runnerId: event.runnerId,
+          runnerName: event.runnerName,
+          accent: color.solid,
+          accentSoft: color.soft,
+          createdAt: event.createdAt,
+          message: event.payload.summary?.trim() ?? "Reported structured telemetry.",
+        };
+      });
+
+    if (eventEntries.length > 0) {
+      return eventEntries;
+    }
+
+    return data.sessions
+      .filter((session) => Boolean(session.summary?.trim()))
+      .sort((left, right) => compareByTimestamp(left.endedAt ?? left.startedAt, right.endedAt ?? right.startedAt))
+      .slice(0, 32)
+      .reverse()
+      .map((session) => {
+        const color = getRunnerColor(session.runnerId);
+
+        return {
+          id: `session:${session.id}`,
+          runnerId: session.runnerId,
+          runnerName: session.runnerName,
+          accent: color.solid,
+          accentSoft: color.soft,
+          createdAt: session.endedAt ?? session.startedAt,
+          message: session.summary?.trim() ?? "Updated the current run.",
+        };
+      });
+  };
 
 const safeParseStreamEvent = (rawPayload: string) => {
   try {
@@ -406,7 +432,11 @@ export function OperatorConsole({
                           style={{ backgroundColor: row.accent, boxShadow: `0 0 0 6px ${row.accentSoft}` }}
                         />
                         <div>
-                          <strong>{row.name}</strong>
+                          <strong>
+                            <Link className="agent-detail-link" href={`/?runnerId=${row.runnerId}`}>
+                              {row.name}
+                            </Link>
+                          </strong>
                           <span className="agent-state-copy">{row.isRunning ? "Running now" : "Idle"}</span>
                         </div>
                       </div>
