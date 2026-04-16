@@ -1,18 +1,12 @@
 import { DashboardScreen } from "../components/dashboard-screen";
 import { getDashboardData } from "../lib/control-node";
-import { normalizeDashboardQuery } from "../lib/dashboard-query";
 
-export default async function HomePage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
-}) {
-  const query = normalizeDashboardQuery(await searchParams);
-  const { data, filterOptions } = await getDashboardData(query);
+export default async function HomePage() {
+  const { data } = await getDashboardData({});
 
   return (
     <main className="shell">
-      <DashboardScreen data={data} filterOptions={filterOptions} query={query} />
+      <DashboardScreen data={data} />
     </main>
   );
 }

@@ -65,9 +65,9 @@ const allowSelfSigned = parseBoolean(process.env.AGENTHARBOR_ALLOW_SELF_SIGNED, 
 const dispatcher = allowSelfSigned ? new Agent({ connect: { rejectUnauthorized: false } }) : undefined;
 
 const dashboardListLimits = {
-  runners: 12,
-  sessions: 10,
-  events: 12,
+  runners: 100,
+  sessions: 100,
+  events: 100,
   filterRunners: 100,
 } as const;
 

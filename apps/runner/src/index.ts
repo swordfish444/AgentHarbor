@@ -38,6 +38,16 @@ const configPath = path.join(configDirectory, "runner.json");
 const demoScenarioNames = ["happy-path", "failure-burst", "mixed-fleet", "recovery-loop", "long-running"] as const;
 const demoAgentTypes = ["codex", "claude-code", "cursor", "automation"] as const;
 const failureCategories = ["build", "test", "network", "auth", "timeout", "human-approval", "unknown"] as const;
+const demoRunnerAliases = [
+  "Patch Panda",
+  "Build Badger",
+  "Trace Tiger",
+  "Prompt Pelican",
+  "Merge Marmot",
+  "Token Tortoise",
+  "Branch Bobcat",
+  "Context Coyote",
+] as const;
 
 const sleep = (durationMs: number) => new Promise((resolve) => setTimeout(resolve, durationMs));
 
@@ -121,6 +131,15 @@ const ensurePositiveNumber = (value: string, optionName: string) => {
   return parsed;
 };
 
+const ensureNonNegativeNumber = (value: string, optionName: string) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${optionName} must be zero or greater`);
+  }
+
+  return parsed;
+};
+
 const parseScenarioName = (value: string): DemoScenarioName => {
   if ((demoScenarioNames as readonly string[]).includes(value)) {
     return value as DemoScenarioName;
@@ -149,8 +168,12 @@ const resolveDemoAgentTypes = (agentTypeOption: DemoAgentType | "mixed", runnerC
   return Array.from({ length: runnerCount }, (_, index) => demoAgentTypes[index % demoAgentTypes.length]);
 };
 
-const buildDemoRunnerName = (baseRunnerName: string, agentType: DemoAgentType, index: number) =>
-  `${baseRunnerName}-${agentType}-${index + 1}`;
+const buildDemoRunnerName = (_baseRunnerName: string, _agentType: DemoAgentType, index: number) => {
+  const alias = demoRunnerAliases[index % demoRunnerAliases.length];
+  const pass = Math.floor(index / demoRunnerAliases.length) + 1;
+
+  return pass > 1 ? `${alias} ${pass}` : alias;
+};
 
 const buildSessionKey = (runnerName: string, scenario: DemoScenarioName, cycle: number) =>
   `${runnerName}-${scenario}-${cycle + 1}-${randomUUID().slice(0, 8)}`;
@@ -660,6 +683,7 @@ const runDemoProgram = async ({
   cycles,
   intervalMs,
   heartbeatIntervalMs,
+  lingerMs,
 }: {
   controlNodeUrl: string;
   allowSelfSigned: boolean;
@@ -670,6 +694,7 @@ const runDemoProgram = async ({
   cycles: number;
   intervalMs: number;
   heartbeatIntervalMs: number;
+  lingerMs: number;
 }) => {
   const agentTypes = resolveDemoAgentTypes(agentTypeOption, runnerCount);
   const contexts = await Promise.all(
@@ -713,6 +738,11 @@ const runDemoProgram = async ({
         }),
       ),
     );
+
+    if (lingerMs > 0) {
+      console.log(`Keeping demo runners connected for ${lingerMs}ms so the dashboard can show idle agents.`);
+      await sleep(lingerMs);
+    }
   } finally {
     await Promise.all(stopHeartbeatLoops.map((stop) => stop()));
   }
@@ -844,6 +874,7 @@ program
   .option("--cycles <cycles>", "Number of demo sessions per runner", "3")
   .option("--interval-ms <intervalMs>", "Delay between scenario events", "1500")
   .option("--heartbeat-interval-ms <heartbeatIntervalMs>", "Delay between automatic heartbeats", "10000")
+  .option("--linger-ms <lingerMs>", "Keep demo runners connected after scenario completion", "0")
   .action(async (options) => {
     const { config } = await getClientFromConfig();
     const scenario = parseScenarioName(options.scenario);
@@ -852,6 +883,7 @@ program
     const cycles = ensurePositiveNumber(options.cycles, "cycles");
     const intervalMs = ensurePositiveNumber(options.intervalMs, "interval-ms");
     const heartbeatIntervalMs = ensurePositiveNumber(options.heartbeatIntervalMs, "heartbeat-interval-ms");
+    const lingerMs = ensureNonNegativeNumber(options.lingerMs, "linger-ms");
     await runDemoProgram({
       controlNodeUrl: config.controlNodeUrl,
       allowSelfSigned: config.allowSelfSigned,
@@ -862,6 +894,7 @@ program
       cycles,
       intervalMs,
       heartbeatIntervalMs,
+      lingerMs,
     });
   });
 
@@ -896,6 +929,7 @@ program
         cycles: step.cycles,
         intervalMs: Math.round(intervalMs * step.multiplier),
         heartbeatIntervalMs,
+        lingerMs: 0,
       });
     }
 
