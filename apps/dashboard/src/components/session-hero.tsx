@@ -4,7 +4,7 @@ import { formatDateTime, formatDurationMs, formatTokenUsage } from "../lib/forma
 import { getSessionFailureSummary } from "../lib/session-detail";
 import { StatusPill } from "./status-pill";
 
-export function SessionHero({ session }: { session: SessionDetail }) {
+export function SessionHero({ session, backHref = "/" }: { session: SessionDetail; backHref?: string }) {
   const failureSummary = getSessionFailureSummary(session);
   const heroCopy =
     session.status === "failed"
@@ -16,7 +16,7 @@ export function SessionHero({ session }: { session: SessionDetail }) {
   return (
     <section className="panel detail-hero" data-status={session.status}>
       <div>
-        <Link className="back-link" href="/">
+        <Link className="back-link" href={backHref}>
           Back to dashboard
         </Link>
         <p className="eyebrow">Session Detail</p>

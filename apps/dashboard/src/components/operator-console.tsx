@@ -1,25 +1,17 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { EventListItem, RunnerListItem, SessionListItem, StreamEvent } from "@agentharbor/shared";
 import type { DashboardData } from "../lib/control-node";
+import { buildDemoDashboardData, createDemoStartValue } from "../lib/demo-mode";
 import { formatInteger, formatRelativeTime, formatTime } from "../lib/formatters";
+import { getRunnerColor } from "../lib/runner-colors";
 
 const rowsPerPage = 5;
 const chatPreviewCharacterThreshold = 140;
 const realtimeEventTypes = ["runner.heartbeat", "telemetry.created", "session.updated", "stats.refresh"] as const;
-
-const runnerPalette = [
-  { solid: "#63b3ff", soft: "rgba(99, 179, 255, 0.18)" },
-  { solid: "#ff8e5f", soft: "rgba(255, 142, 95, 0.18)" },
-  { solid: "#70e2a7", soft: "rgba(112, 226, 167, 0.18)" },
-  { solid: "#d8a7ff", soft: "rgba(216, 167, 255, 0.18)" },
-  { solid: "#ffd36b", soft: "rgba(255, 211, 107, 0.18)" },
-  { solid: "#7de1ff", soft: "rgba(125, 225, 255, 0.18)" },
-  { solid: "#ff98c7", soft: "rgba(255, 152, 199, 0.18)" },
-  { solid: "#8ff29d", soft: "rgba(143, 242, 157, 0.18)" },
-] as const;
 
 type StreamState = "connecting" | "live" | "reconnecting";
 
@@ -53,19 +45,6 @@ const isConnectedRunner = (runner: RunnerListItem) => runner.isOnline || runner.
 
 const isChatworthyEvent = (event: EventListItem) =>
   event.eventType !== "runner.heartbeat" && Boolean(event.payload.summary?.trim());
-
-const hashString = (value: string) => {
-  let hash = 0;
-
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash << 5) - hash + value.charCodeAt(index);
-    hash |= 0;
-  }
-
-  return Math.abs(hash);
-};
-
-const getRunnerColor = (runnerId: string) => runnerPalette[hashString(runnerId) % runnerPalette.length] ?? runnerPalette[0];
 
 const dedupeById = <T extends { id: string }>(items: T[]) => {
   const map = new Map<string, T>();
@@ -122,48 +101,47 @@ const buildAgentRows = (data: DashboardData): AgentRow[] => {
     });
 };
 
-const buildChatEntries = (data: DashboardData): ChatEntry[] =>
-  {
-    const eventEntries = dedupeById(data.events.filter(isChatworthyEvent))
-      .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime())
-      .slice(-32)
-      .map((event) => {
-        const color = getRunnerColor(event.runnerId);
+const buildChatEntries = (data: DashboardData): ChatEntry[] => {
+  const eventEntries = dedupeById(data.events.filter(isChatworthyEvent))
+    .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime())
+    .slice(-32)
+    .map((event) => {
+      const color = getRunnerColor(event.runnerId);
 
-        return {
-          id: event.id,
-          runnerId: event.runnerId,
-          runnerName: event.runnerName,
-          accent: color.solid,
-          accentSoft: color.soft,
-          createdAt: event.createdAt,
-          message: event.payload.summary?.trim() ?? "Reported structured telemetry.",
-        };
-      });
+      return {
+        id: event.id,
+        runnerId: event.runnerId,
+        runnerName: event.runnerName,
+        accent: color.solid,
+        accentSoft: color.soft,
+        createdAt: event.createdAt,
+        message: event.payload.summary?.trim() ?? "Reported structured telemetry.",
+      };
+    });
 
-    if (eventEntries.length > 0) {
-      return eventEntries;
-    }
+  if (eventEntries.length > 0) {
+    return eventEntries;
+  }
 
-    return data.sessions
-      .filter((session) => Boolean(session.summary?.trim()))
-      .sort((left, right) => compareByTimestamp(left.endedAt ?? left.startedAt, right.endedAt ?? right.startedAt))
-      .slice(0, 32)
-      .reverse()
-      .map((session) => {
-        const color = getRunnerColor(session.runnerId);
+  return data.sessions
+    .filter((session) => Boolean(session.summary?.trim()))
+    .sort((left, right) => compareByTimestamp(left.endedAt ?? left.startedAt, right.endedAt ?? right.startedAt))
+    .slice(0, 32)
+    .reverse()
+    .map((session) => {
+      const color = getRunnerColor(session.runnerId);
 
-        return {
-          id: `session:${session.id}`,
-          runnerId: session.runnerId,
-          runnerName: session.runnerName,
-          accent: color.solid,
-          accentSoft: color.soft,
-          createdAt: session.endedAt ?? session.startedAt,
-          message: session.summary?.trim() ?? "Updated the current run.",
-        };
-      });
-  };
+      return {
+        id: `session:${session.id}`,
+        runnerId: session.runnerId,
+        runnerName: session.runnerName,
+        accent: color.solid,
+        accentSoft: color.soft,
+        createdAt: session.endedAt ?? session.startedAt,
+        message: session.summary?.trim() ?? "Updated the current run.",
+      };
+    });
+};
 
 const safeParseStreamEvent = (rawPayload: string) => {
   try {
@@ -196,13 +174,21 @@ const optimisticUpsertRunner = (data: DashboardData, runner: RunnerListItem): Da
   runners: dedupeById([runner, ...data.runners]).sort((left, right) => compareByTimestamp(left.lastSeenAt, right.lastSeenAt)).slice(0, 120),
 });
 
+const buildDemoSearch = (demoStart: number | null) => (demoStart ? `?demo=1&demoStart=${demoStart}` : "");
+
 export function OperatorConsole({
   initialData,
   renderedAt,
+  initialDemoEnabled = false,
+  initialDemoStart = null,
 }: {
   initialData: DashboardData;
   renderedAt: string;
+  initialDemoEnabled?: boolean;
+  initialDemoStart?: number | null;
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
   const [data, setData] = useState(initialData);
   const [page, setPage] = useState(0);
   const [expandedMessages, setExpandedMessages] = useState<Record<string, boolean>>({});
@@ -211,23 +197,93 @@ export function OperatorConsole({
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [isPinnedToLatest, setIsPinnedToLatest] = useState(true);
   const [relativeNow, setRelativeNow] = useState(() => new Date(renderedAt).getTime());
+  const [isDemoMode, setIsDemoMode] = useState(initialDemoEnabled);
+  const [demoStart, setDemoStart] = useState<number | null>(initialDemoStart);
+  const [demoNow, setDemoNow] = useState(() => new Date(renderedAt).getTime());
+  const [freshRunnerIds, setFreshRunnerIds] = useState<string[]>([]);
   const chatViewportRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(false);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshInFlightRef = useRef(false);
   const refreshQueuedRef = useRef(false);
+  const previousRunnerIdsRef = useRef<string[]>([]);
 
-  const agentRows = useMemo(() => buildAgentRows(data), [data]);
+  const effectiveDemoStart = isDemoMode ? (demoStart ?? createDemoStartValue()) : null;
+
+  useEffect(() => {
+    if (isDemoMode && demoStart == null) {
+      setDemoStart(createDemoStartValue());
+    }
+  }, [demoStart, isDemoMode]);
+
+  useEffect(() => {
+    if (!isDemoMode) {
+      return;
+    }
+
+    setDemoNow(Date.now());
+    const timer = setInterval(() => {
+      setDemoNow(Date.now());
+      setRelativeNow(Date.now());
+    }, 2_000);
+
+    return () => clearInterval(timer);
+  }, [isDemoMode]);
+
+  useEffect(() => {
+    if (isDemoMode) {
+      return;
+    }
+
+    const clock = setInterval(() => {
+      setRelativeNow(Date.now());
+    }, 30_000);
+
+    return () => clearInterval(clock);
+  }, [isDemoMode]);
+
+  const displayData = useMemo(
+    () => (isDemoMode && effectiveDemoStart ? buildDemoDashboardData(demoNow, effectiveDemoStart) : data),
+    [data, demoNow, effectiveDemoStart, isDemoMode],
+  );
+
+  const agentRows = useMemo(() => buildAgentRows(displayData), [displayData]);
   const connectedAgents = agentRows.length;
   const runningAgents = agentRows.filter((row) => row.isRunning).length;
   const idleAgents = Math.max(0, connectedAgents - runningAgents);
   const pageCount = Math.max(1, Math.ceil(agentRows.length / rowsPerPage));
   const visibleRows = agentRows.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
-  const chatEntries = useMemo(() => buildChatEntries(data), [data]);
+  const chatEntries = useMemo(() => buildChatEntries(displayData), [displayData]);
+  const displayStreamState = isDemoMode ? "live" : streamState;
+  const displayLastSignalAt = isDemoMode ? new Date(demoNow).toISOString() : lastSignalAt;
+  const demoSearch = buildDemoSearch(effectiveDemoStart);
 
   useEffect(() => {
     setPage((currentPage) => Math.min(currentPage, pageCount - 1));
   }, [pageCount]);
+
+  useEffect(() => {
+    const previousRunnerIds = previousRunnerIdsRef.current;
+    const nextRunnerIds = agentRows.map((row) => row.runnerId);
+
+    if (previousRunnerIds.length > 0) {
+      const addedRunnerIds = nextRunnerIds.filter((runnerId) => !previousRunnerIds.includes(runnerId));
+
+      if (addedRunnerIds.length > 0) {
+        setFreshRunnerIds((currentIds) => [...new Set([...currentIds, ...addedRunnerIds])]);
+
+        const timeout = setTimeout(() => {
+          setFreshRunnerIds((currentIds) => currentIds.filter((runnerId) => !addedRunnerIds.includes(runnerId)));
+        }, 1_900);
+
+        previousRunnerIdsRef.current = nextRunnerIds;
+        return () => clearTimeout(timeout);
+      }
+    }
+
+    previousRunnerIdsRef.current = nextRunnerIds;
+    return undefined;
+  }, [agentRows]);
 
   const refreshSnapshot = useCallback(async () => {
     if (refreshInFlightRef.current) {
@@ -274,16 +330,11 @@ export function OperatorConsole({
   );
 
   useEffect(() => {
-    const clock = setInterval(() => {
-      setRelativeNow(Date.now());
-    }, 30_000);
+    if (isDemoMode) {
+      setStreamState("live");
+      return;
+    }
 
-    return () => {
-      clearInterval(clock);
-    };
-  }, []);
-
-  useEffect(() => {
     let closed = false;
     const source = new EventSource("/api/stream/events");
 
@@ -308,17 +359,21 @@ export function OperatorConsole({
         setStreamState("live");
         const streamEvent = safeParseStreamEvent(String(event.data));
         setLastSignalAt(streamEvent?.emittedAt ?? new Date().toISOString());
+        const payload = streamEvent?.data;
+        const nextEvent = payload?.event;
+        const nextSession = payload?.session;
+        const nextRunner = payload?.runner;
 
-        if (streamEvent?.data?.event) {
-          setData((currentData) => optimisticInsertEvent(currentData, streamEvent.data!.event!));
+        if (nextEvent) {
+          setData((currentData) => optimisticInsertEvent(currentData, nextEvent));
         }
 
-        if (streamEvent?.data?.session) {
-          setData((currentData) => optimisticUpsertSession(currentData, streamEvent.data!.session!));
+        if (nextSession) {
+          setData((currentData) => optimisticUpsertSession(currentData, nextSession));
         }
 
-        if (streamEvent?.data?.runner) {
-          setData((currentData) => optimisticUpsertRunner(currentData, streamEvent.data!.runner!));
+        if (nextRunner) {
+          setData((currentData) => optimisticUpsertRunner(currentData, nextRunner));
         }
 
         scheduleSnapshotRefresh();
@@ -339,7 +394,7 @@ export function OperatorConsole({
         refreshTimerRef.current = null;
       }
     };
-  }, [refreshSnapshot, scheduleSnapshotRefresh]);
+  }, [isDemoMode, refreshSnapshot, scheduleSnapshotRefresh]);
 
   const scrollChatToLatest = useCallback(() => {
     const viewport = chatViewportRef.current;
@@ -378,8 +433,52 @@ export function OperatorConsole({
     setIsPinnedToLatest(pinned);
   };
 
+  const handleDemoToggle = () => {
+    if (isDemoMode) {
+      setIsDemoMode(false);
+      setDemoStart(null);
+      router.replace(pathname, { scroll: false });
+      return;
+    }
+
+    const nextDemoStart = createDemoStartValue();
+    setIsDemoMode(true);
+    setDemoStart(nextDemoStart);
+    router.replace(`${pathname}?demo=1&demoStart=${nextDemoStart}`, { scroll: false });
+  };
+
   return (
     <section className="realtime-screen">
+      <header className="panel wallboard-header">
+        <div className="wallboard-header-brand">
+          <img alt="AgentHarbor" className="wallboard-logo" src="/agentharbor-mark.svg" />
+          <div>
+            <p className="eyebrow">AgentHarbor</p>
+            <h1>Fleet View</h1>
+          </div>
+        </div>
+
+        <div className="wallboard-header-actions">
+          <span className={`stream-indicator stream-${displayStreamState}`}>
+            <span className="stream-dot" />
+            {isDemoMode ? "Demo live" : displayStreamState === "live" ? "Live" : displayStreamState === "connecting" ? "Connecting" : "Reconnecting"}
+          </span>
+          <span className="monitor-meta-text">
+            {displayLastSignalAt ? `Last signal ${formatRelativeTime(displayLastSignalAt, isDemoMode ? demoNow : relativeNow)}` : "Awaiting live signals"}
+          </span>
+          <button
+            aria-label="Demo Mode"
+            aria-pressed={isDemoMode}
+            className={`demo-toggle ${isDemoMode ? "is-active" : ""}`}
+            onClick={handleDemoToggle}
+            type="button"
+          >
+            <span className="demo-toggle-knob" />
+            <span className="demo-toggle-tooltip">Demo Mode</span>
+          </button>
+        </div>
+      </header>
+
       <section className="monitor-metrics">
         <article className="monitor-metric panel">
           <strong>{formatInteger(connectedAgents)}</strong>
@@ -399,13 +498,7 @@ export function OperatorConsole({
         <div className="monitor-section-header">
           <p className="eyebrow monitor-section-label">Connected agents</p>
           <div className="monitor-header-meta">
-            <span className={`stream-indicator stream-${streamState}`}>
-              <span className="stream-dot" />
-              {streamState === "live" ? "Live" : streamState === "connecting" ? "Connecting" : "Reconnecting"}
-            </span>
-            <span className="monitor-meta-text">
-              {lastSignalAt ? `Last signal ${formatRelativeTime(lastSignalAt, relativeNow)}` : "Awaiting live signals"}
-            </span>
+            <span className="monitor-meta-text">{isDemoMode ? "Seeded presentation loop" : "Live control-node snapshot"}</span>
           </div>
         </div>
 
@@ -423,7 +516,10 @@ export function OperatorConsole({
             <tbody>
               {visibleRows.length > 0 ? (
                 visibleRows.map((row) => (
-                  <tr className={row.isRunning ? "agent-row-running" : "agent-row-idle"} key={row.runnerId}>
+                  <tr
+                    className={`${row.isRunning ? "agent-row-running" : "agent-row-idle"} ${freshRunnerIds.includes(row.runnerId) ? "agent-row-fresh" : ""}`}
+                    key={row.runnerId}
+                  >
                     <td>
                       <div className="agent-name-cell">
                         <span
@@ -433,7 +529,7 @@ export function OperatorConsole({
                         />
                         <div>
                           <strong>
-                            <Link className="agent-detail-link" href={`/?runnerId=${row.runnerId}`}>
+                            <Link className="agent-detail-link" href={`/agents/${row.runnerId}${demoSearch}`}>
                               {row.name}
                             </Link>
                           </strong>
@@ -441,7 +537,7 @@ export function OperatorConsole({
                         </div>
                       </div>
                     </td>
-                    <td>{formatRelativeTime(row.startedAt, relativeNow)}</td>
+                    <td>{formatRelativeTime(row.startedAt, isDemoMode ? demoNow : relativeNow)}</td>
                     <td>{formatInteger(row.tasksCompleted)}</td>
                     <td>{formatInteger(row.errors)}</td>
                     <td>{formatInteger(row.totalTokens)}</td>
@@ -487,10 +583,6 @@ export function OperatorConsole({
         <div className="monitor-section-header">
           <p className="eyebrow monitor-section-label">Chat</p>
           <div className="monitor-header-meta">
-            <span className={`stream-indicator stream-${streamState}`}>
-              <span className="stream-dot" />
-              {streamState === "live" ? "Live" : streamState === "connecting" ? "Connecting" : "Reconnecting"}
-            </span>
             <span className="monitor-meta-text">{isPinnedToLatest ? "Pinned to latest" : "Scroll paused"}</span>
             {!isPinnedToLatest ? (
               <button
@@ -512,32 +604,38 @@ export function OperatorConsole({
               chatEntries.map((entry) => {
                 const isExpanded = Boolean(expandedMessages[entry.id]);
                 const shouldClamp = entry.message.length > chatPreviewCharacterThreshold;
+                const avatar = entry.runnerName.charAt(0).toUpperCase();
 
                 return (
                   <article className="chat-entry" key={entry.id} style={{ borderLeftColor: entry.accent }}>
-                    <p className={`chat-entry-text ${shouldClamp && !isExpanded ? "is-clamped" : ""}`}>
-                      <span className="chat-entry-time">{formatTime(entry.createdAt)}</span>
-                      <span className="chat-entry-divider"> {" - "}</span>
-                      <span className="chat-entry-author" style={{ color: entry.accent }}>
-                        {entry.runnerName}
-                      </span>
-                      <span className="chat-entry-divider">{": "}</span>
-                      <span className="chat-entry-content">{entry.message}</span>
-                    </p>
-                    {shouldClamp ? (
-                      <button
-                        className="chat-expand-button"
-                        onClick={() =>
-                          setExpandedMessages((currentState) => ({
-                            ...currentState,
-                            [entry.id]: !currentState[entry.id],
-                          }))
-                        }
-                        type="button"
-                      >
-                        {isExpanded ? "Show less" : "Show more"}
-                      </button>
-                    ) : null}
+                    <span className="chat-entry-avatar" style={{ backgroundColor: entry.accentSoft, color: entry.accent }}>
+                      {avatar}
+                    </span>
+                    <div className="chat-entry-body">
+                      <p className={`chat-entry-text ${shouldClamp && !isExpanded ? "is-clamped" : ""}`}>
+                        <span className="chat-entry-time">{formatTime(entry.createdAt)}</span>
+                        <span className="chat-entry-divider"> {" - "}</span>
+                        <span className="chat-entry-author" style={{ color: entry.accent }}>
+                          {entry.runnerName}
+                        </span>
+                        <span className="chat-entry-divider">{": "}</span>
+                        <span className="chat-entry-content">{entry.message}</span>
+                      </p>
+                      {shouldClamp ? (
+                        <button
+                          className="chat-expand-button"
+                          onClick={() =>
+                            setExpandedMessages((currentState) => ({
+                              ...currentState,
+                              [entry.id]: !currentState[entry.id],
+                            }))
+                          }
+                          type="button"
+                        >
+                          {isExpanded ? "Show less" : "Show more"}
+                        </button>
+                      ) : null}
+                    </div>
                   </article>
                 );
               })
@@ -547,7 +645,15 @@ export function OperatorConsole({
           </div>
         </div>
 
-        {snapshotError ? <p className="monitor-error-copy">{snapshotError}</p> : null}
+        {snapshotError && !isDemoMode ? <p className="monitor-error-copy">{snapshotError}</p> : null}
+        {isDemoMode ? (
+          <div className="monitor-demo-footer">
+            <span>Detail drill-in: click an agent to open its full detail page.</span>
+            <Link className="agent-detail-link" href="/">
+              Open the full dashboard
+            </Link>
+          </div>
+        ) : null}
       </section>
     </section>
   );

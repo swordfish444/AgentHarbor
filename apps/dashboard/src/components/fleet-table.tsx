@@ -80,7 +80,11 @@ export function FleetTable({
               {runners.map((runner) => (
                 <tr key={runner.id}>
                   <td>
-                    <strong>{runner.name}</strong>
+                    <strong>
+                      <Link className="agent-detail-link" href={`/agents/${runner.id}`}>
+                        {runner.name}
+                      </Link>
+                    </strong>
                     <span className="row-meta">{runner.id}</span>
                   </td>
                   <td>
