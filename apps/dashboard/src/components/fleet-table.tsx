@@ -8,10 +8,14 @@ export function FleetTable({
   runners,
   query,
   runnerGroups,
+  clearHref = "/",
+  detailSearch = "",
 }: {
   runners: RunnerListItem[];
   query: DashboardQuery;
   runnerGroups: RunnerLabelGroup[];
+  clearHref?: string;
+  detailSearch?: string;
 }) {
   const filtered = hasActiveDashboardFilters(query);
 
@@ -61,7 +65,7 @@ export function FleetTable({
               ? "Try broadening the runner, label, or search filters to widen the fleet view."
               : "Once demo runners enroll and heartbeat, the fleet table will populate here."}
           </p>
-          {filtered ? <Link href="/">Clear filters</Link> : null}
+          {filtered ? <Link href={clearHref}>Clear filters</Link> : null}
         </div>
       ) : (
         <div className="table-wrap">
@@ -81,7 +85,7 @@ export function FleetTable({
                 <tr key={runner.id}>
                   <td>
                     <strong>
-                      <Link className="agent-detail-link" href={`/agents/${runner.id}`}>
+                      <Link className="agent-detail-link" href={`/agents/${runner.id}${detailSearch}`}>
                         {runner.name}
                       </Link>
                     </strong>

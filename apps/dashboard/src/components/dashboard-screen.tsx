@@ -19,15 +19,23 @@ export function DashboardScreen({
   data,
   query,
   filterOptions,
+  demoState,
 }: {
   data: DashboardData;
   query: DashboardQuery;
   filterOptions: DashboardFilterOptions;
+  demoState?: {
+    demoStart: number;
+  };
 }) {
+  const isDemoMode = demoState != null;
   const filtered = hasActiveDashboardFilters(query);
   const selectedTimeRangeLabel = query.timeRange
     ? dashboardTimeRangeOptions.find((option) => option.value === query.timeRange)?.label ?? query.timeRange
     : null;
+  const detailSearch = isDemoMode ? `?demo=1&demoStart=${demoState.demoStart}` : "";
+  const wallboardHref = isDemoMode ? `/wallboard${detailSearch}` : "/wallboard";
+  const clearHref = isDemoMode ? `/${detailSearch}` : "/";
 
   const activeFilters = [
     query.status ? `Status: ${query.status}` : null,
@@ -44,14 +52,15 @@ export function DashboardScreen({
           <p className="eyebrow">AgentHarbor</p>
           <h1>Control tower visibility for AI agents spread across your fleet.</h1>
           <p className="hero-copy">
-            The dashboard is now reading live fleet stats, analytics, and operator alerts from the control node so the
-            view stays anchored to the same slice of sessions, runners, and telemetry throughout the screen.
+            {isDemoMode
+              ? "This dashboard is running on the curated presentation fallback so the drilldown path stays intact when the control node is unavailable."
+              : "The dashboard is now reading live fleet stats, analytics, and operator alerts from the control node so the view stays anchored to the same slice of sessions, runners, and telemetry throughout the screen."}
           </p>
           <div className="hero-filter-list">
-            <Link className="tag" href="/wallboard">
+            <Link className="tag" href={wallboardHref}>
               Open the presentation wallboard
             </Link>
-            {filtered
+            {filtered && !isDemoMode
               ? activeFilters.map((filter) => (
                   <span className="tag" key={filter}>
                     {filter}
@@ -69,8 +78,10 @@ export function DashboardScreen({
           </div>
           <div className="hero-meta-block">
             <p className="eyebrow">Filters</p>
-            <p>{filtered ? "URL filters active" : "Viewing the full dashboard slice"}</p>
-            {selectedTimeRangeLabel ? (
+            <p>{isDemoMode ? "Curated presentation fallback" : filtered ? "URL filters active" : "Viewing the full dashboard slice"}</p>
+            {isDemoMode ? (
+              <p>Drilldowns stay available without the control node.</p>
+            ) : selectedTimeRangeLabel ? (
               <p>Rolling window: {selectedTimeRangeLabel}</p>
             ) : query.since ? (
               <p>Window starts {formatDateTime(query.since)}</p>
@@ -82,16 +93,16 @@ export function DashboardScreen({
       </section>
 
       <MetricsStrip hasActiveFilters={filtered} stats={data.stats} />
-      <AlertRail alerts={data.alerts} />
-      <FilterBar filterOptions={filterOptions} query={query} />
+      <AlertRail alerts={data.alerts} linkSuffix={detailSearch} />
+      <FilterBar filterOptions={filterOptions} isDemoMode={isDemoMode} query={query} />
 
       <section className="dashboard-main-grid">
-        <FleetTable query={query} runnerGroups={data.runnerGroups} runners={data.runners} />
-        <SessionList query={query} sessions={data.sessions} />
+        <FleetTable clearHref={clearHref} detailSearch={detailSearch} query={query} runnerGroups={data.runnerGroups} runners={data.runners} />
+        <SessionList clearHref={clearHref} detailSearch={detailSearch} query={query} sessions={data.sessions} />
       </section>
 
       <section className="dashboard-lower-grid">
-        <LiveEventFeed events={data.events} query={query} />
+        <LiveEventFeed clearHref={clearHref} detailSearch={detailSearch} events={data.events} query={query} realtimeEnabled={!isDemoMode} />
         <AnalyticsPanel analytics={data.analytics} />
       </section>
     </div>

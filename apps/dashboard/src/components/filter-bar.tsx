@@ -18,9 +18,11 @@ const readSelectValue = (value: string) => (value === "" ? undefined : value);
 export function FilterBar({
   query,
   filterOptions,
+  isDemoMode = false,
 }: {
   query: DashboardQuery;
   filterOptions: DashboardFilterOptions;
+  isDemoMode?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -63,7 +65,13 @@ export function FilterBar({
           <p className="eyebrow">View controls</p>
           <h2>Focus the screen</h2>
         </div>
-        {query.since ? <span className="subtle-badge">Filtered view</span> : <span className="subtle-badge">Default overview</span>}
+        {isDemoMode ? (
+          <span className="subtle-badge">Curated fallback</span>
+        ) : query.since ? (
+          <span className="subtle-badge">Filtered view</span>
+        ) : (
+          <span className="subtle-badge">Default overview</span>
+        )}
       </div>
 
       <form className="filter-layout" onSubmit={submitSearch}>
@@ -71,6 +79,7 @@ export function FilterBar({
           <label htmlFor="dashboard-status">Session status</label>
           <select
             id="dashboard-status"
+            disabled={isDemoMode}
             onChange={(event) => updateQuery({ status: readSelectValue(event.target.value) as DashboardQuery["status"] })}
             value={query.status ?? ""}
           >
@@ -87,6 +96,7 @@ export function FilterBar({
           <label htmlFor="dashboard-agent">Agent type</label>
           <select
             id="dashboard-agent"
+            disabled={isDemoMode}
             onChange={(event) =>
               updateQuery({ agentType: readSelectValue(event.target.value) as DashboardQuery["agentType"] })
             }
@@ -105,6 +115,7 @@ export function FilterBar({
           <label htmlFor="dashboard-runner">Runner</label>
           <select
             id="dashboard-runner"
+            disabled={isDemoMode}
             onChange={(event) => updateQuery({ runnerId: readSelectValue(event.target.value) })}
             value={query.runnerId ?? ""}
           >
@@ -121,6 +132,7 @@ export function FilterBar({
           <label htmlFor="dashboard-label">Label</label>
           <select
             id="dashboard-label"
+            disabled={isDemoMode}
             onChange={(event) => updateQuery({ label: readSelectValue(event.target.value) })}
             value={query.label ?? ""}
           >
@@ -137,6 +149,7 @@ export function FilterBar({
           <label htmlFor="dashboard-window">Time window</label>
           <select
             id="dashboard-window"
+            disabled={isDemoMode}
             onChange={(event) => {
               const nextValue = event.target.value as DashboardTimeRangeValue | "custom";
 
@@ -164,6 +177,7 @@ export function FilterBar({
           <label htmlFor="dashboard-search">Search</label>
           <input
             id="dashboard-search"
+            disabled={isDemoMode}
             onChange={(event) => setSearchValue(event.target.value)}
             placeholder="Session key, summary, runner, category"
             type="search"
@@ -172,12 +186,12 @@ export function FilterBar({
         </div>
 
         <div className="filter-actions">
-          <button className="button-primary" disabled={isPending} type="submit">
-            {isPending ? "Updating..." : "Apply"}
+          <button className="button-primary" disabled={isPending || isDemoMode} type="submit">
+            {isDemoMode ? "Locked" : isPending ? "Updating..." : "Apply"}
           </button>
           <button
             className="button-secondary"
-            disabled={isPending}
+            disabled={isPending || isDemoMode}
             onClick={() => {
               setSearchValue("");
               navigate({});

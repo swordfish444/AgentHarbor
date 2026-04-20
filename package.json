@@ -11,6 +11,10 @@
     "dev:runner": "pnpm --filter @agentharbor/runner dev",
     "db:generate": "pnpm --filter @agentharbor/control-node prisma generate",
     "db:push": "pnpm --filter @agentharbor/control-node prisma db push",
+    "demo:reset": "pnpm --filter @agentharbor/control-node exec tsx scripts/demo-reset.ts",
+    "demo:seed": "pnpm --filter @agentharbor/control-node exec tsx scripts/demo-seed.ts",
+    "demo:burst": "pnpm --filter @agentharbor/control-node exec tsx scripts/demo-burst.ts",
+    "demo:warm-start": "pnpm --filter @agentharbor/control-node exec tsx scripts/demo-warm-start.ts",
     "lint": "pnpm -r --filter './packages/**' --filter './apps/**' lint",
     "test:control": "pnpm --filter @agentharbor/control-node test",
     "typecheck": "pnpm -r --filter './packages/**' --filter './apps/**' typecheck"

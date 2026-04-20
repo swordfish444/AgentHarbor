@@ -1,0 +1,424 @@
+import type { PrismaClient } from "@prisma/client";
+import { ensureTrailingSlashlessUrl } from "@agentharbor/config";
+import { AgentHarborClient } from "@agentharbor/sdk";
+import type { AgentType, TelemetryEventEnvelope } from "@agentharbor/shared";
+import { buildDemoReplayPlan, createDemoStartValue } from "@agentharbor/shared";
+import { prisma } from "./prisma.js";
+
+const demoMachineDescriptor = {
+  os: "macOS 15.4",
+  architecture: "arm64",
+} as const;
+
+const sleep = (durationMs: number) => new Promise((resolve) => setTimeout(resolve, durationMs));
+
+const demoRunnerWhere = {
+  OR: [{ environment: "demo" }, { labels: { has: "demo" } }],
+};
+
+const buildClient = (baseUrl: string, allowSelfSigned: boolean, runnerToken?: string) =>
+  new AgentHarborClient({
+    baseUrl: ensureTrailingSlashlessUrl(baseUrl),
+    allowSelfSigned,
+    ...(runnerToken ? { runnerToken } : {}),
+  });
+
+const buildBurstEvent = ({
+  eventType,
+  agentType,
+  timestamp,
+  sessionKey,
+  summary,
+  category,
+  status,
+  tokenUsage,
+  filesTouchedCount,
+}: {
+  eventType: TelemetryEventEnvelope["eventType"];
+  agentType: AgentType;
+  timestamp: string;
+  sessionKey?: string;
+  summary: string;
+  category: "session" | "planning" | "implementation" | "build" | "test" | "network" | "auth" | "failure" | "timeout" | "human-approval" | "unknown" | "recovery";
+  status?: string;
+  tokenUsage?: number;
+  filesTouchedCount?: number;
+}): TelemetryEventEnvelope => ({
+  eventType,
+  payload: {
+    timestamp,
+    agentType,
+    ...(sessionKey ? { sessionKey } : {}),
+    summary,
+    category,
+    ...(status ? { status } : {}),
+    ...(tokenUsage != null ? { tokenUsage } : {}),
+    ...(filesTouchedCount != null ? { filesTouchedCount } : {}),
+  },
+});
+
+export interface DemoResetResult {
+  runnerCount: number;
+  sessionCount: number;
+  eventCount: number;
+  machineCount: number;
+}
+
+export interface DemoSeedOptions {
+  baseUrl: string;
+  allowSelfSigned: boolean;
+  demoStartMs?: number;
+  nowMs?: number;
+}
+
+export interface DemoSeedResult {
+  demoStartMs: number;
+  runnerCount: number;
+  sessionCount: number;
+  eventCount: number;
+  heartbeatCount: number;
+  failedSessionCount: number;
+  runningSessionCount: number;
+}
+
+export interface DemoBurstOptions {
+  baseUrl: string;
+  allowSelfSigned: boolean;
+  stepDelayMs?: number;
+}
+
+export interface DemoBurstResult {
+  runnerCount: number;
+  eventCount: number;
+}
+
+export const resetDemoData = async (client: PrismaClient = prisma): Promise<DemoResetResult> => {
+  const demoRunners = await client.runner.findMany({
+    where: demoRunnerWhere,
+    select: {
+      id: true,
+    },
+  });
+
+  if (demoRunners.length === 0) {
+    const machineCleanup = await client.machine.deleteMany({
+      where: {
+        runners: {
+          none: {},
+        },
+      },
+    });
+
+    return {
+      runnerCount: 0,
+      sessionCount: 0,
+      eventCount: 0,
+      machineCount: machineCleanup.count,
+    };
+  }
+
+  const runnerIds = demoRunners.map((runner) => runner.id);
+  const [eventCount, sessionCount] = await Promise.all([
+    client.telemetryEvent.count({
+      where: {
+        runnerId: {
+          in: runnerIds,
+        },
+      },
+    }),
+    client.agentSession.count({
+      where: {
+        runnerId: {
+          in: runnerIds,
+        },
+      },
+    }),
+  ]);
+
+  const deletedRunners = await client.runner.deleteMany({
+    where: {
+      id: {
+        in: runnerIds,
+      },
+    },
+  });
+
+  const deletedMachines = await client.machine.deleteMany({
+    where: {
+      runners: {
+        none: {},
+      },
+    },
+  });
+
+  return {
+    runnerCount: deletedRunners.count,
+    sessionCount,
+    eventCount,
+    machineCount: deletedMachines.count,
+  };
+};
+
+export const seedDemoData = async ({
+  baseUrl,
+  allowSelfSigned,
+  demoStartMs,
+  nowMs = Date.now(),
+}: DemoSeedOptions): Promise<DemoSeedResult> => {
+  const effectiveDemoStartMs = demoStartMs ?? createDemoStartValue(nowMs);
+  const replayPlan = buildDemoReplayPlan(nowMs, effectiveDemoStartMs);
+  const bootstrapClient = buildClient(baseUrl, allowSelfSigned);
+  const enrolledRunners = new Map<
+    string,
+    {
+      token: string;
+    }
+  >();
+
+  for (const runnerPlan of replayPlan.runners) {
+    const enrollment = await bootstrapClient.enrollRunner({
+      runnerName: runnerPlan.seed.name,
+      labels: runnerPlan.seed.labels,
+      environment: runnerPlan.seed.environment,
+      machine: {
+        hostname: runnerPlan.seed.hostname,
+        ...demoMachineDescriptor,
+      },
+    });
+
+    enrolledRunners.set(runnerPlan.seed.id, {
+      token: enrollment.credentials.token,
+    });
+  }
+
+  let heartbeatCount = 0;
+
+  for (const runnerPlan of replayPlan.runners) {
+    const enrollment = enrolledRunners.get(runnerPlan.seed.id);
+
+    if (!enrollment) {
+      continue;
+    }
+
+    const client = buildClient(baseUrl, allowSelfSigned, enrollment.token);
+
+    if (runnerPlan.telemetryEvents.length > 0) {
+      await client.sendTelemetryBatch(runnerPlan.telemetryEvents);
+    }
+
+    if (runnerPlan.lastSeenAt) {
+      await client.sendHeartbeat({
+        timestamp: runnerPlan.lastSeenAt,
+        activeSessionCount: runnerPlan.activeSessionCount,
+        metadata: {
+          mode: "demo-seed",
+        },
+      });
+      heartbeatCount += 1;
+    }
+  }
+
+  return {
+    demoStartMs: effectiveDemoStartMs,
+    runnerCount: replayPlan.snapshot.runners.length,
+    sessionCount: replayPlan.snapshot.sessions.length,
+    eventCount: replayPlan.snapshot.events.length + heartbeatCount,
+    heartbeatCount,
+    failedSessionCount: replayPlan.snapshot.sessions.filter((session) => session.status === "failed").length,
+    runningSessionCount: replayPlan.snapshot.sessions.filter((session) => session.status === "running").length,
+  };
+};
+
+export const runDemoBurst = async ({
+  baseUrl,
+  allowSelfSigned,
+  stepDelayMs = 700,
+}: DemoBurstOptions): Promise<DemoBurstResult> => {
+  const bootstrapClient = buildClient(baseUrl, allowSelfSigned);
+  const burstRunners = [
+    {
+      name: "Latency Lynx",
+      hostname: "latency-lynx.local",
+      agentType: "cursor" as const,
+      labels: ["demo", "presentation", "burst", "ops"],
+      successSessionKey: "LL-601",
+    },
+    {
+      name: "Rollback Raven",
+      hostname: "rollback-raven.local",
+      agentType: "codex" as const,
+      labels: ["demo", "presentation", "burst", "incident"],
+      successSessionKey: "RR-808",
+    },
+  ];
+
+  const enrolled = await Promise.all(
+    burstRunners.map(async (runner) => {
+      const enrollment = await bootstrapClient.enrollRunner({
+        runnerName: runner.name,
+        labels: runner.labels,
+        environment: "demo",
+        machine: {
+          hostname: runner.hostname,
+          ...demoMachineDescriptor,
+        },
+      });
+
+      return {
+        ...runner,
+        client: buildClient(baseUrl, allowSelfSigned, enrollment.credentials.token),
+      };
+    }),
+  );
+
+  let eventCount = 0;
+
+  for (const runner of enrolled) {
+    await runner.client.sendHeartbeat({
+      timestamp: new Date().toISOString(),
+      activeSessionCount: 1,
+      metadata: {
+        mode: "demo-burst",
+      },
+    });
+    eventCount += 1;
+  }
+
+  const [successRunner, failureRunner] = enrolled;
+
+  if (!successRunner || !failureRunner) {
+    return {
+      runnerCount: enrolled.length,
+      eventCount,
+    };
+  }
+
+  const emit = async (client: AgentHarborClient, event: TelemetryEventEnvelope) => {
+    await client.sendTelemetryEvent(event);
+    eventCount += 1;
+    await sleep(stepDelayMs);
+  };
+
+  await emit(
+    successRunner.client,
+    buildBurstEvent({
+      eventType: "agent.summary.updated",
+      agentType: successRunner.agentType,
+      timestamp: new Date().toISOString(),
+      summary: "Joined the burst lane and started tracing a latency regression across the live feed.",
+      category: "session",
+      status: "running",
+      tokenUsage: 1_100,
+      filesTouchedCount: 1,
+    }),
+  );
+
+  await emit(
+    failureRunner.client,
+    buildBurstEvent({
+      eventType: "agent.summary.updated",
+      agentType: failureRunner.agentType,
+      timestamp: new Date().toISOString(),
+      summary: "Joined the burst lane and opened a rollback drill for the staging socket path.",
+      category: "session",
+      status: "running",
+      tokenUsage: 1_000,
+      filesTouchedCount: 1,
+    }),
+  );
+
+  await emit(
+    successRunner.client,
+    buildBurstEvent({
+      eventType: "agent.session.started",
+      agentType: successRunner.agentType,
+      timestamp: new Date().toISOString(),
+      sessionKey: successRunner.successSessionKey,
+      summary: "Started the live latency investigation and loaded the streaming checkpoints.",
+      category: "session",
+      status: "running",
+      tokenUsage: 2_800,
+      filesTouchedCount: 2,
+    }),
+  );
+
+  await emit(
+    failureRunner.client,
+    buildBurstEvent({
+      eventType: "agent.session.started",
+      agentType: failureRunner.agentType,
+      timestamp: new Date().toISOString(),
+      sessionKey: failureRunner.successSessionKey,
+      summary: "Started the rollback drill and reopened the socket replay checkpoint.",
+      category: "session",
+      status: "running",
+      tokenUsage: 2_700,
+      filesTouchedCount: 2,
+    }),
+  );
+
+  await emit(
+    successRunner.client,
+    buildBurstEvent({
+      eventType: "agent.prompt.executed",
+      agentType: successRunner.agentType,
+      timestamp: new Date().toISOString(),
+      sessionKey: successRunner.successSessionKey,
+      summary: "Compared burst latency across the last three fan-out windows and isolated the noisy queue edge.",
+      category: "network",
+      status: "running",
+      tokenUsage: 6_400,
+      filesTouchedCount: 3,
+    }),
+  );
+
+  await emit(
+    failureRunner.client,
+    buildBurstEvent({
+      eventType: "agent.prompt.executed",
+      agentType: failureRunner.agentType,
+      timestamp: new Date().toISOString(),
+      sessionKey: failureRunner.successSessionKey,
+      summary: "Replayed the staging socket path and hit the same rollback boundary after the first reconnect.",
+      category: "network",
+      status: "warning",
+      tokenUsage: 6_100,
+      filesTouchedCount: 3,
+    }),
+  );
+
+  await emit(
+    successRunner.client,
+    buildBurstEvent({
+      eventType: "agent.session.completed",
+      agentType: successRunner.agentType,
+      timestamp: new Date().toISOString(),
+      sessionKey: successRunner.successSessionKey,
+      summary: "Closed the latency investigation and handed the narrowed queue edge back to the operator.",
+      category: "session",
+      status: "completed",
+      tokenUsage: 9_200,
+      filesTouchedCount: 4,
+    }),
+  );
+
+  await emit(
+    failureRunner.client,
+    buildBurstEvent({
+      eventType: "agent.session.failed",
+      agentType: failureRunner.agentType,
+      timestamp: new Date().toISOString(),
+      sessionKey: failureRunner.successSessionKey,
+      summary: "Rollback drill failed after the staging socket reset before the checkpoint landed cleanly.",
+      category: "network",
+      status: "failed",
+      tokenUsage: 8_800,
+      filesTouchedCount: 4,
+    }),
+  );
+
+  return {
+    runnerCount: enrolled.length,
+    eventCount,
+  };
+};

@@ -1,7 +1,13 @@
 import Link from "next/link";
 import type { AlertItem } from "@agentharbor/shared";
 
-export function AlertRail({ alerts }: { alerts: AlertItem[] }) {
+export function AlertRail({
+  alerts,
+  linkSuffix = "",
+}: {
+  alerts: AlertItem[];
+  linkSuffix?: string;
+}) {
   return (
     <section className="panel">
       <div className="section-header">
@@ -21,7 +27,11 @@ export function AlertRail({ alerts }: { alerts: AlertItem[] }) {
         <div className="alert-grid">
           {alerts.map((alert) =>
             alert.href ? (
-              <Link className={`alert-card alert-card-interactive severity-${alert.severity}`} href={alert.href} key={alert.id}>
+              <Link
+                className={`alert-card alert-card-interactive severity-${alert.severity}`}
+                href={`${alert.href}${linkSuffix}`}
+                key={alert.id}
+              >
                 <span className="alert-severity">{alert.severity}</span>
                 <strong>{alert.title}</strong>
                 <p>{alert.detail}</p>

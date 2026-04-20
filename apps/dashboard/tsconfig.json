@@ -3,6 +3,9 @@
   "compilerOptions": {
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "paths": {
+      "@agentharbor/shared": ["../../packages/shared/dist/index.js"]
+    },
     "jsx": "preserve",
     "lib": ["dom", "dom.iterable", "es2022"],
     "allowJs": false,
