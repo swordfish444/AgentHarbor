@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { EventListItem, RunnerListItem, SessionListItem, StreamEvent } from "@agentharbor/shared";
 import type { DashboardData } from "../lib/control-node";
-import { buildDemoDashboardData, createDemoStartValue } from "../lib/demo-mode";
+import { buildDemoPlaybackDashboardData, buildDemoSearch, createDemoStartValue } from "../lib/demo-mode";
 import { formatInteger, formatRelativeTime, formatTime } from "../lib/formatters";
 import { getRunnerColor } from "../lib/runner-colors";
 
@@ -174,18 +174,18 @@ const optimisticUpsertRunner = (data: DashboardData, runner: RunnerListItem): Da
   runners: dedupeById([runner, ...data.runners]).sort((left, right) => compareByTimestamp(left.lastSeenAt, right.lastSeenAt)).slice(0, 120),
 });
 
-const buildDemoSearch = (demoStart: number | null) => (demoStart ? `?demo=1&demoStart=${demoStart}` : "");
-
 export function OperatorConsole({
   initialData,
   renderedAt,
   initialDemoEnabled = false,
   initialDemoStart = null,
+  initialDemoAnchor = null,
 }: {
   initialData: DashboardData;
   renderedAt: string;
   initialDemoEnabled?: boolean;
   initialDemoStart?: number | null;
+  initialDemoAnchor?: number | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -200,6 +200,7 @@ export function OperatorConsole({
   const [isDemoMode, setIsDemoMode] = useState(initialDemoEnabled);
   const [demoStart, setDemoStart] = useState<number | null>(initialDemoStart);
   const [demoNow, setDemoNow] = useState(() => new Date(renderedAt).getTime());
+  const [demoAnchorMs, setDemoAnchorMs] = useState(() => initialDemoAnchor ?? new Date(renderedAt).getTime());
   const [freshRunnerIds, setFreshRunnerIds] = useState<string[]>([]);
   const chatViewportRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(false);
@@ -212,7 +213,9 @@ export function OperatorConsole({
 
   useEffect(() => {
     if (isDemoMode && demoStart == null) {
-      setDemoStart(createDemoStartValue());
+      const now = Date.now();
+      setDemoAnchorMs(now);
+      setDemoStart(createDemoStartValue(now));
     }
   }, [demoStart, isDemoMode]);
 
@@ -243,8 +246,8 @@ export function OperatorConsole({
   }, [isDemoMode]);
 
   const displayData = useMemo(
-    () => (isDemoMode && effectiveDemoStart ? buildDemoDashboardData(demoNow, effectiveDemoStart) : data),
-    [data, demoNow, effectiveDemoStart, isDemoMode],
+    () => (isDemoMode && effectiveDemoStart ? buildDemoPlaybackDashboardData(demoNow, effectiveDemoStart, demoAnchorMs) : data),
+    [data, demoAnchorMs, demoNow, effectiveDemoStart, isDemoMode],
   );
 
   const agentRows = useMemo(() => buildAgentRows(displayData), [displayData]);
@@ -256,7 +259,14 @@ export function OperatorConsole({
   const chatEntries = useMemo(() => buildChatEntries(displayData), [displayData]);
   const displayStreamState = isDemoMode ? "live" : streamState;
   const displayLastSignalAt = isDemoMode ? new Date(demoNow).toISOString() : lastSignalAt;
-  const demoSearch = buildDemoSearch(effectiveDemoStart);
+  const demoSearch = buildDemoSearch(
+    isDemoMode && effectiveDemoStart != null
+      ? {
+          demoStart: effectiveDemoStart,
+          demoAnchor: demoAnchorMs,
+        }
+      : null,
+  );
 
   useEffect(() => {
     setPage((currentPage) => Math.min(currentPage, pageCount - 1));
@@ -441,10 +451,18 @@ export function OperatorConsole({
       return;
     }
 
-    const nextDemoStart = createDemoStartValue();
+    const now = Date.now();
+    const nextDemoStart = createDemoStartValue(now);
     setIsDemoMode(true);
+    setDemoAnchorMs(now);
     setDemoStart(nextDemoStart);
-    router.replace(`${pathname}?demo=1&demoStart=${nextDemoStart}`, { scroll: false });
+    router.replace(
+      `${pathname}${buildDemoSearch({
+        demoStart: nextDemoStart,
+        demoAnchor: now,
+      })}`,
+      { scroll: false },
+    );
   };
 
   return (

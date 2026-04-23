@@ -4,7 +4,19 @@ import { hasActiveDashboardFilters, type DashboardQuery } from "../lib/dashboard
 import { formatTime, humanizeCategory, humanizeEventType } from "../lib/formatters";
 import { DashboardLiveRefresh } from "./dashboard-live-refresh";
 
-export function LiveEventFeed({ events, query }: { events: EventListItem[]; query: DashboardQuery }) {
+export function LiveEventFeed({
+  events,
+  query,
+  clearHref = "/",
+  detailSearch = "",
+  realtimeEnabled = true,
+}: {
+  events: EventListItem[];
+  query: DashboardQuery;
+  clearHref?: string;
+  detailSearch?: string;
+  realtimeEnabled?: boolean;
+}) {
   const filtered = hasActiveDashboardFilters(query);
 
   return (
@@ -14,7 +26,7 @@ export function LiveEventFeed({ events, query }: { events: EventListItem[]; quer
           <p className="eyebrow">Telemetry</p>
           <h2>Recent event stream</h2>
         </div>
-        <DashboardLiveRefresh />
+        {realtimeEnabled ? <DashboardLiveRefresh /> : <span className="subtle-badge">Curated snapshot</span>}
       </div>
 
       {events.length === 0 ? (
@@ -25,7 +37,7 @@ export function LiveEventFeed({ events, query }: { events: EventListItem[]; quer
               ? "No events have arrived for this filter set."
               : "Waiting for telemetry from enrolled runners."}
           </p>
-          {filtered ? <Link href="/">Clear filters</Link> : null}
+          {filtered ? <Link href={clearHref}>Clear filters</Link> : null}
         </div>
       ) : (
         <div className="event-feed">
@@ -55,7 +67,7 @@ export function LiveEventFeed({ events, query }: { events: EventListItem[]; quer
             }
 
             return (
-              <Link className="event-card event-link" href={`/session/${event.sessionId}`} key={event.id}>
+              <Link className="event-card event-link" href={`/session/${event.sessionId}${detailSearch}`} key={event.id}>
                 {content}
               </Link>
             );

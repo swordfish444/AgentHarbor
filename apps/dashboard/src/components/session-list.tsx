@@ -4,7 +4,17 @@ import { hasActiveDashboardFilters, type DashboardQuery } from "../lib/dashboard
 import { formatDurationMs, formatInteger, formatTokenUsage, formatDateTime } from "../lib/formatters";
 import { StatusPill } from "./status-pill";
 
-export function SessionList({ sessions, query }: { sessions: SessionListItem[]; query: DashboardQuery }) {
+export function SessionList({
+  sessions,
+  query,
+  clearHref = "/",
+  detailSearch = "",
+}: {
+  sessions: SessionListItem[];
+  query: DashboardQuery;
+  clearHref?: string;
+  detailSearch?: string;
+}) {
   const filtered = hasActiveDashboardFilters(query);
 
   return (
@@ -25,7 +35,7 @@ export function SessionList({ sessions, query }: { sessions: SessionListItem[]; 
               ? "Try removing one of the active filters or broadening the search text."
               : "The latest runner telemetry will populate this panel once demo traffic starts."}
           </p>
-          {filtered ? <Link href="/">Clear filters</Link> : null}
+          {filtered ? <Link href={clearHref}>Clear filters</Link> : null}
         </div>
       ) : (
         <div className="stack-list">
@@ -33,7 +43,7 @@ export function SessionList({ sessions, query }: { sessions: SessionListItem[]; 
             <Link
               className={`list-card session-card ${session.status === "failed" ? "list-card-critical" : ""}`}
               key={session.id}
-              href={`/session/${session.id}`}
+              href={`/session/${session.id}${detailSearch}`}
             >
               <div>
                 <div className="list-title-row">

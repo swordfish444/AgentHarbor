@@ -6,17 +6,20 @@ export function WallboardScreen({
   renderedAt,
   initialDemoEnabled = false,
   initialDemoStart = null,
+  initialDemoAnchor = null,
 }: {
   data: DashboardData;
   renderedAt: string;
   initialDemoEnabled?: boolean;
   initialDemoStart?: number | null;
+  initialDemoAnchor?: number | null;
 }) {
   return (
     <OperatorConsole
       initialData={data}
       initialDemoEnabled={initialDemoEnabled}
       initialDemoStart={initialDemoStart}
+      initialDemoAnchor={initialDemoAnchor}
       renderedAt={renderedAt}
     />
   );

@@ -115,7 +115,7 @@ async function getJson<T>(path: string, schema: { parse: (value: unknown) => T }
   return schema.parse(payload);
 }
 
-const buildRunnerFilterOptions = (allRunners: RunnerListItem[]): DashboardFilterOptions => {
+export const buildRunnerFilterOptions = (allRunners: RunnerListItem[]): DashboardFilterOptions => {
   const labels = Array.from(new Set(allRunners.flatMap((runner) => runner.labels))).sort((left, right) =>
     left.localeCompare(right),
   );

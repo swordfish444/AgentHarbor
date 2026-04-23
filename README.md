@@ -131,6 +131,32 @@ node dist/index.js heartbeat-loop --interval-ms 10000
 
 ## Demo flows
 
+Warm-start the presentation baseline with seeded control-node data:
+
+```bash
+pnpm demo:warm-start
+```
+
+This resets only demo-tagged rows, replays a curated 6-runner / 10-session baseline through the real enroll, heartbeat, and telemetry APIs, and prints:
+
+- the live dashboard URL
+- the main dashboard `?demo=1` fallback URL
+- the curated wallboard URL
+
+Layer a short live burst on top of the seeded baseline:
+
+```bash
+pnpm demo:burst
+```
+
+Open the main dashboard fallback directly if the control node is unavailable:
+
+```text
+http://localhost:3003/?demo=1
+```
+
+For the presenter sequence and startup order, see [demo-runbook.md](./docs/demo-runbook.md).
+
 Simulate a successful multi-runner fleet:
 
 ```bash
@@ -255,6 +281,10 @@ For the full booth smoke-test workflow, see [booth-network-runbook.md](./docs/bo
 - `pnpm dev:runner`
 - `pnpm db:generate`
 - `pnpm db:push`
+- `pnpm demo:reset`
+- `pnpm demo:seed`
+- `pnpm demo:burst`
+- `pnpm demo:warm-start`
 - `pnpm test:control`
 
 ## Security baseline

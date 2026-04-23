@@ -1,6 +1,6 @@
 import { WallboardScreen } from "../../components/wallboard-screen";
 import { getDashboardData } from "../../lib/control-node";
-import { buildDemoDashboardData, createDemoStartValue } from "../../lib/demo-mode";
+import { buildDemoPlaybackDashboardData, resolveDemoPlaybackState } from "../../lib/demo-mode";
 
 export default async function WallboardPage({
   searchParams,
@@ -8,15 +8,20 @@ export default async function WallboardPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const resolvedSearchParams = await searchParams;
-  const demoEnabled = resolvedSearchParams.demo === "1";
-  const demoStartParam = typeof resolvedSearchParams.demoStart === "string" ? Number(resolvedSearchParams.demoStart) : null;
-  const demoStart = demoEnabled ? (demoStartParam && Number.isFinite(demoStartParam) ? demoStartParam : createDemoStartValue()) : null;
-  const renderedAt = new Date().toISOString();
-  const data = demoEnabled && demoStart != null ? buildDemoDashboardData(Date.now(), demoStart) : (await getDashboardData({})).data;
+  const nowMs = Date.now();
+  const demoState = resolveDemoPlaybackState(resolvedSearchParams, nowMs);
+  const renderedAt = new Date(nowMs).toISOString();
+  const data = demoState ? buildDemoPlaybackDashboardData(nowMs, demoState.demoStart, demoState.demoAnchor) : (await getDashboardData({})).data;
 
   return (
     <main className="shell">
-      <WallboardScreen data={data} initialDemoEnabled={demoEnabled} initialDemoStart={demoStart} renderedAt={renderedAt} />
+      <WallboardScreen
+        data={data}
+        initialDemoEnabled={demoState != null}
+        initialDemoStart={demoState?.demoStart ?? null}
+        initialDemoAnchor={demoState?.demoAnchor ?? null}
+        renderedAt={renderedAt}
+      />
     </main>
   );
 }

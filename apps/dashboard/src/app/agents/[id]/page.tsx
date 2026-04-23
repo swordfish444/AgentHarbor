@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { AgentDetailScreen } from "../../../components/agent-detail-screen";
 import { getDashboardData } from "../../../lib/control-node";
-import { buildDemoDashboardData, createDemoStartValue, isKnownDemoRunner } from "../../../lib/demo-mode";
+import { buildDemoPlaybackDashboardData, isKnownDemoRunner, resolveDemoPlaybackState } from "../../../lib/demo-mode";
 
 export default async function AgentDetailPage({
   params,
@@ -12,12 +12,11 @@ export default async function AgentDetailPage({
 }) {
   const { id } = await params;
   const resolvedSearchParams = await searchParams;
-  const demoEnabled = resolvedSearchParams.demo === "1";
-  const demoStartParam = typeof resolvedSearchParams.demoStart === "string" ? Number(resolvedSearchParams.demoStart) : null;
-  const demoStart = demoEnabled && demoStartParam && Number.isFinite(demoStartParam) ? demoStartParam : createDemoStartValue();
-  const renderedAt = new Date().toISOString();
+  const nowMs = Date.now();
+  const demoState = resolveDemoPlaybackState(resolvedSearchParams, nowMs);
+  const renderedAt = new Date(nowMs).toISOString();
 
-  if (demoEnabled) {
+  if (demoState) {
     if (!isKnownDemoRunner(id)) {
       notFound();
     }
@@ -26,9 +25,10 @@ export default async function AgentDetailPage({
       <main className="shell">
         <AgentDetailScreen
           agentId={id}
-          initialData={buildDemoDashboardData(Date.now(), demoStart)}
+          initialData={buildDemoPlaybackDashboardData(nowMs, demoState.demoStart, demoState.demoAnchor)}
           initialDemoEnabled
-          initialDemoStart={demoStart}
+          initialDemoStart={demoState.demoStart}
+          initialDemoAnchor={demoState.demoAnchor}
           renderedAt={renderedAt}
         />
       </main>
