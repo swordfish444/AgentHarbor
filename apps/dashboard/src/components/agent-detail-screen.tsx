@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { EventListItem, RunnerListItem, SessionListItem } from "@agentharbor/shared";
 import type { DashboardData } from "../lib/control-node";
-import { buildDemoDashboardData, getDemoSecurityIncident } from "../lib/demo-mode";
+import { buildDemoPlaybackDashboardData, buildDemoSearch, getDemoPlaybackSecurityIncident } from "../lib/demo-mode";
 import {
   formatDateTime,
   formatDurationMs,
@@ -65,14 +65,17 @@ export function AgentDetailScreen({
   renderedAt,
   initialDemoEnabled = false,
   initialDemoStart = null,
+  initialDemoAnchor = null,
 }: {
   agentId: string;
   initialData: DashboardData;
   renderedAt: string;
   initialDemoEnabled?: boolean;
   initialDemoStart?: number | null;
+  initialDemoAnchor?: number | null;
 }) {
   const [demoNow, setDemoNow] = useState(() => new Date(renderedAt).getTime());
+  const demoAnchorMs = useMemo(() => initialDemoAnchor ?? new Date(renderedAt).getTime(), [initialDemoAnchor, renderedAt]);
   const isDemoMode = initialDemoEnabled && initialDemoStart != null;
 
   useEffect(() => {
@@ -88,14 +91,15 @@ export function AgentDetailScreen({
   }, [initialDemoStart, isDemoMode]);
 
   const data = useMemo(
-    () => (isDemoMode && initialDemoStart ? buildDemoDashboardData(demoNow, initialDemoStart) : initialData),
-    [demoNow, initialData, initialDemoStart, isDemoMode],
+    () => (isDemoMode && initialDemoStart ? buildDemoPlaybackDashboardData(demoNow, initialDemoStart, demoAnchorMs) : initialData),
+    [demoAnchorMs, demoNow, initialData, initialDemoStart, isDemoMode],
   );
   const runner = data.runners.find((candidate) => candidate.id === agentId) ?? null;
   const sessions = data.sessions.filter((session) => session.runnerId === agentId).sort(sessionSort);
   const latestSession = sessions[0] ?? null;
   const events = data.events.filter((event) => event.runnerId === agentId).sort(eventSort);
-  const securityIncident = isDemoMode && initialDemoStart ? getDemoSecurityIncident(agentId, demoNow, initialDemoStart) : null;
+  const securityIncident =
+    isDemoMode && initialDemoStart ? getDemoPlaybackSecurityIncident(agentId, demoNow, initialDemoStart, demoAnchorMs) : null;
   const status = deriveRunnerStatus(runner, latestSession, Boolean(securityIncident));
   const color = getRunnerColor(agentId);
   const totalTokens = sessions.reduce((sum, session) => sum + (session.tokenUsage ?? 0), 0);
@@ -112,10 +116,17 @@ export function AgentDetailScreen({
   const liveAlert = !securityIncident ? data.alerts[0] ?? null : null;
   const runnerName = runner?.name ?? latestSession?.runnerName ?? agentId;
   const agentType = latestSession?.agentType ?? (events[0]?.payload.agentType ?? "custom");
-  const backHref =
-    isDemoMode && initialDemoStart != null ? `/wallboard?demo=1&demoStart=${initialDemoStart}` : "/wallboard";
-  const fullDashboardHref =
-    isDemoMode && initialDemoStart != null ? `/?demo=1&demoStart=${initialDemoStart}` : "/";
+  const demoSearch = buildDemoSearch(
+    isDemoMode && initialDemoStart != null
+      ? {
+          demoStart: initialDemoStart,
+          demoAnchor: demoAnchorMs,
+        }
+      : null,
+  );
+  const backHref = isDemoMode && initialDemoStart != null ? `/wallboard${demoSearch}` : "/wallboard";
+  const fullDashboardHref = isDemoMode && initialDemoStart != null ? `/${demoSearch}` : "/";
+  const latestSessionHref = latestSession ? `/session/${latestSession.id}${demoSearch}` : null;
 
   return (
     <div className="agent-detail-stack">
@@ -160,7 +171,15 @@ export function AgentDetailScreen({
           </div>
           <div className="hero-meta-block">
             <p className="eyebrow">Latest Session</p>
-            <p>{latestSession?.sessionKey ?? "No session yet"}</p>
+            {latestSessionHref ? (
+              <p>
+                <Link className="agent-detail-link" href={latestSessionHref}>
+                  {latestSession.sessionKey}
+                </Link>
+              </p>
+            ) : (
+              <p>No session yet</p>
+            )}
             <p>{latestSession ? formatDurationMs(latestSession.durationMs) : "No duration yet"}</p>
             <p>{latestSession?.startedAt ? `Started ${formatDateTime(latestSession.startedAt)}` : "Awaiting first session"}</p>
           </div>
@@ -277,7 +296,11 @@ export function AgentDetailScreen({
             {sessions.length > 0 ? (
               <div className="stack-list">
                 {sessions.slice(0, 5).map((session) => (
-                  <article className={`list-card session-card ${session.status === "failed" ? "list-card-critical" : ""}`} key={session.id}>
+                  <Link
+                    className={`list-card session-card ${session.status === "failed" ? "list-card-critical" : ""}`}
+                    key={session.id}
+                    href={`/session/${session.id}${demoSearch}`}
+                  >
                     <div>
                       <div className="list-title-row">
                         <strong>{session.sessionKey}</strong>
@@ -292,17 +315,9 @@ export function AgentDetailScreen({
                     </div>
                     <div className="list-footer">
                       <span>Started {formatDateTime(session.startedAt)}</span>
-                      {isDemoMode && initialDemoStart != null ? (
-                        <Link className="agent-detail-link" href={`/session/${session.id}?demo=1&demoStart=${initialDemoStart}`}>
-                          Open session
-                        </Link>
-                      ) : (
-                        <Link className="agent-detail-link" href={`/session/${session.id}`}>
-                          Open session
-                        </Link>
-                      )}
+                      <span className="agent-detail-link">Open session</span>
                     </div>
-                  </article>
+                  </Link>
                 ))}
               </div>
             ) : (

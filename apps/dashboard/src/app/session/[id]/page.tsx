@@ -6,7 +6,7 @@ import { SessionRawEvents } from "../../../components/session-raw-events";
 import { SessionSummaryCards } from "../../../components/session-summary-cards";
 import { SessionTimeline } from "../../../components/session-timeline";
 import { ControlNodeRequestError, getSessionDetail } from "../../../lib/control-node";
-import { buildDemoSessionDetail, createDemoStartValue } from "../../../lib/demo-mode";
+import { buildDemoPlaybackSessionDetail, buildDemoSearch, resolveDemoPlaybackState } from "../../../lib/demo-mode";
 
 export default async function SessionDetailPage({
   params,
@@ -17,12 +17,11 @@ export default async function SessionDetailPage({
 }) {
   const { id } = await params;
   const resolvedSearchParams = await searchParams;
-  const demoEnabled = resolvedSearchParams.demo === "1";
-  const demoStartParam = typeof resolvedSearchParams.demoStart === "string" ? Number(resolvedSearchParams.demoStart) : null;
-  const demoStart = demoEnabled ? (demoStartParam && Number.isFinite(demoStartParam) ? demoStartParam : createDemoStartValue()) : null;
+  const nowMs = Date.now();
+  const demoState = resolveDemoPlaybackState(resolvedSearchParams, nowMs);
 
-  if (demoEnabled && demoStart != null) {
-    const session = buildDemoSessionDetail(id, Date.now(), demoStart);
+  if (demoState) {
+    const session = buildDemoPlaybackSessionDetail(id, nowMs, demoState.demoStart, demoState.demoAnchor);
 
     if (!session) {
       notFound();
@@ -30,7 +29,7 @@ export default async function SessionDetailPage({
 
     return (
       <main className="shell">
-        <SessionHero session={session} backHref={`/agents/${session.runnerId}?demo=1&demoStart=${demoStart}`} />
+        <SessionHero session={session} backHref={`/agents/${session.runnerId}${buildDemoSearch(demoState)}`} />
 
         <section className="detail-layout">
           <div className="detail-sidebar-stack">

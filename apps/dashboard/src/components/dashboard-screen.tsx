@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { DashboardData } from "../lib/control-node";
+import { buildDemoSearch } from "../lib/demo-mode";
 import { formatDateTime } from "../lib/formatters";
 import {
   dashboardTimeRangeOptions,
@@ -26,6 +27,7 @@ export function DashboardScreen({
   filterOptions: DashboardFilterOptions;
   demoState?: {
     demoStart: number;
+    demoAnchor: number;
   };
 }) {
   const isDemoMode = demoState != null;
@@ -33,7 +35,7 @@ export function DashboardScreen({
   const selectedTimeRangeLabel = query.timeRange
     ? dashboardTimeRangeOptions.find((option) => option.value === query.timeRange)?.label ?? query.timeRange
     : null;
-  const detailSearch = isDemoMode ? `?demo=1&demoStart=${demoState.demoStart}` : "";
+  const detailSearch = buildDemoSearch(demoState);
   const wallboardHref = isDemoMode ? `/wallboard${detailSearch}` : "/wallboard";
   const clearHref = isDemoMode ? `/${detailSearch}` : "/";
 
