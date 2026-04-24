@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SessionDetail } from "@agentharbor/shared";
-import { getSessionFailureSummary, getSessionTerminalEvent } from "./session-detail";
+import { getSessionFailureInsight, getSessionFailureSummary, getSessionTerminalEvent } from "./session-detail";
 
 const buildSession = (events: SessionDetail["events"]): SessionDetail => ({
   id: "session-1",
@@ -68,4 +68,75 @@ test("treats blocked events as the terminal failure signal when sessions fail", 
     eventType: "Agent / Prompt / Executed",
     createdAt: "2026-04-09T18:04:00.000Z",
   });
+});
+
+test("extracts structured failure insight from terminal event metadata", () => {
+  const session = buildSession([
+    {
+      id: "event-1",
+      runnerId: "runner-1",
+      runnerName: "mission-codex-1",
+      sessionId: "session-1",
+      sessionKey: "mission-codex-1-blocked",
+      eventType: "agent.session.failed",
+      payload: {
+        timestamp: "2026-04-09T18:04:00.000Z",
+        agentType: "codex",
+        sessionKey: "mission-codex-1-blocked",
+        summary: "Replay failed after socket checkpoint drift.",
+        category: "network",
+        status: "failed",
+        metadata: {
+          failureCode: "STREAM-CHECKPOINT-DRIFT",
+          rootCause: "Replay cursor advanced before checkpoint acknowledgement persisted.",
+          trigger: "Staging socket reset at reconnect boundary.",
+          impact: "Rollback replay cannot be trusted yet.",
+          affectedComponent: "control-node event stream",
+          traceId: "demo-trace-ss-406",
+          recoveredFromSessionKey: "SS-406",
+          evidence: ["Socket reset preceded checkpoint ack.", "Heartbeat stayed online."],
+          nextActions: ["Pause rollback drill.", "Replay with checkpoint guard."],
+        },
+      },
+      createdAt: "2026-04-09T18:04:00.000Z",
+    },
+  ]);
+
+  assert.deepEqual(getSessionFailureInsight(session), {
+    failureCode: "STREAM-CHECKPOINT-DRIFT",
+    rootCause: "Replay cursor advanced before checkpoint acknowledgement persisted.",
+    trigger: "Staging socket reset at reconnect boundary.",
+    impact: "Rollback replay cannot be trusted yet.",
+    affectedComponent: "control-node event stream",
+    traceId: "demo-trace-ss-406",
+    recoveredFromSessionKey: "SS-406",
+    evidence: ["Socket reset preceded checkpoint ack.", "Heartbeat stayed online."],
+    nextActions: ["Pause rollback drill.", "Replay with checkpoint guard."],
+    eventType: "Agent / Session / Failed",
+    createdAt: "2026-04-09T18:04:00.000Z",
+  });
+});
+
+test("failure insight falls back cleanly when metadata is absent", () => {
+  const session = buildSession([
+    {
+      id: "event-1",
+      runnerId: "runner-1",
+      runnerName: "mission-codex-1",
+      sessionId: "session-1",
+      sessionKey: "mission-codex-1-blocked",
+      eventType: "agent.session.failed",
+      payload: {
+        timestamp: "2026-04-09T18:04:00.000Z",
+        agentType: "codex",
+        sessionKey: "mission-codex-1-blocked",
+        summary: "Replay failed without structured metadata.",
+        category: "network",
+        status: "failed",
+      },
+      createdAt: "2026-04-09T18:04:00.000Z",
+    },
+  ]);
+
+  assert.equal(getSessionFailureInsight(session), null);
 });

@@ -12,6 +12,7 @@ import type {
   SessionListItem,
   StatsResponse,
   TelemetryEventEnvelope,
+  TelemetryEventPayload,
   TelemetryEventType,
 } from "./telemetry.js";
 
@@ -42,6 +43,7 @@ export interface DemoSessionTimelineSeed {
   status?: string;
   tokenUsageRatio?: number;
   filesTouchedRatio?: number;
+  metadata?: TelemetryEventPayload["metadata"];
 }
 
 export interface DemoSessionSeed {
@@ -112,11 +114,72 @@ interface DemoEventSeed {
   status?: string;
   tokenUsage?: number;
   filesTouchedCount?: number;
+  durationMs?: number;
+  metadata?: TelemetryEventPayload["metadata"];
 }
 
 const securityIncidentRunnerId = "cipher-coyote";
 const securityIncidentEventId = "cipher-coyote-session-1-security-warning";
+export const demoPrimaryIncidentRunnerId = "socket-shark";
+export const demoPrimaryIncidentSessionId = "socket-shark-session-2";
 const failureCategories = new Set<EventCategory>(["auth", "build", "failure", "network", "test", "timeout"]);
+
+const secretReviewWarningMetadata = {
+  failureCode: "SEC-POSTINSTALL-CREDENTIAL-PATH",
+  rootCause: "A dependency postinstall hook requested access to a protected runtime credential path.",
+  trigger: "Dependency diff introduced a new postinstall script during the release-readiness pass.",
+  impact: "The merge path is paused until an operator verifies the package source and lockfile hash.",
+  affectedComponent: "release dependency audit",
+  traceId: "demo-trace-cc-913",
+  evidence: [
+    "Postinstall script attempted to read /secrets/runtime.env outside the approved build directory.",
+    "Package hash diverged from the previously approved lockfile snapshot.",
+    "Cipher Coyote isolated the dependency before any release task resumed.",
+  ],
+  nextActions: [
+    "Inspect the dependency diff and source registry.",
+    "Keep the merge path paused until a human approves or rejects the package.",
+    "Rotate the staging credential if the package came from an untrusted mirror.",
+  ],
+} satisfies NonNullable<TelemetryEventPayload["metadata"]>;
+
+const socketCheckpointFailureMetadata = {
+  failureCode: "STREAM-CHECKPOINT-DRIFT",
+  rootCause: "The reconnect path advanced the replay cursor before the checkpoint acknowledgement was persisted.",
+  trigger: "Staging socket reset occurred at the first reconnect boundary during rollback replay.",
+  impact: "The operator cannot trust the first rollback replay until the checkpoint guard is applied.",
+  affectedComponent: "control-node event stream",
+  traceId: "demo-trace-ss-406",
+  evidence: [
+    "Socket closed 184ms before the checkpoint acknowledgement landed.",
+    "Replay cursor advanced from window 17 to 18 without a persisted checkpoint event.",
+    "Runner heartbeat stayed online, so the failure is isolated to the stream path instead of machine liveness.",
+  ],
+  nextActions: [
+    "Pause the rollback drill before publishing the replay result.",
+    "Apply the persisted cursor guard and replay the checkpoint window.",
+    "Inspect socket fan-out logs using trace demo-trace-ss-406.",
+  ],
+} satisfies NonNullable<TelemetryEventPayload["metadata"]>;
+
+const socketRecoveryMetadata = {
+  recoveredFromSessionKey: "SS-406",
+  failureCode: "STREAM-CHECKPOINT-DRIFT",
+  rootCause: "Persisted cursor guard now blocks replay cursor advancement until the checkpoint acknowledgement lands.",
+  trigger: "Follow-up replay started after the operator reviewed trace demo-trace-ss-406.",
+  impact: "Rollback replay can continue with a verifiable checkpoint trail.",
+  affectedComponent: "control-node event stream",
+  traceId: "demo-trace-ss-407",
+  evidence: [
+    "Checkpoint acknowledgement persisted before replay cursor advanced.",
+    "Replay window 17 was reprocessed without duplicate fan-out events.",
+    "Recovery session links back to failed session SS-406 for operator context.",
+  ],
+  nextActions: [
+    "Let the rollback drill continue with the checkpoint guard enabled.",
+    "Keep monitoring the live feed for any repeated socket reset warnings.",
+  ],
+} satisfies NonNullable<TelemetryEventPayload["metadata"]>;
 
 export function scaleDemoOffset(value: number) {
   return value * demoScaleFactor;
@@ -620,6 +683,7 @@ export const demoSessionSeeds: DemoSessionSeed[] = [
         status: "warning",
         tokenUsageRatio: 0.68,
         filesTouchedRatio: 0.73,
+        metadata: secretReviewWarningMetadata,
       },
       {
         key: "final",
@@ -730,6 +794,7 @@ export const demoSessionSeeds: DemoSessionSeed[] = [
         status: "warning",
         tokenUsageRatio: 0.76,
         filesTouchedRatio: 1,
+        metadata: socketCheckpointFailureMetadata,
       },
       {
         key: "final",
@@ -740,6 +805,66 @@ export const demoSessionSeeds: DemoSessionSeed[] = [
         status: "failed",
         tokenUsageRatio: 1,
         filesTouchedRatio: 1,
+        metadata: socketCheckpointFailureMetadata,
+      },
+    ],
+  },
+  {
+    id: "socket-shark-session-3",
+    runnerId: "socket-shark",
+    sessionKey: "SS-407",
+    agentType: "codex",
+    startOffsetMs: scaleDemoOffset(545_000),
+    durationMs: scaleDemoOffset(25_000),
+    finalStatus: "completed",
+    summary: "Applied the checkpoint guard and replayed the rollback window cleanly.",
+    runningSummary: "Applying the checkpoint guard before replaying the rollback window again.",
+    tokenUsage: 12_800,
+    filesTouchedCount: 4,
+    timeline: [
+      {
+        key: "started",
+        offsetMs: 0,
+        eventType: "agent.session.started",
+        summary: "Started the recovery pass from failed session SS-406 with the socket trace pinned.",
+        category: "recovery",
+        status: "running",
+        tokenUsageRatio: 0.12,
+        filesTouchedRatio: 0.25,
+        metadata: socketRecoveryMetadata,
+      },
+      {
+        key: "checkpoint-1",
+        offsetMs: scaleDemoOffset(8_000),
+        eventType: "agent.prompt.executed",
+        summary: "Inserted a persisted cursor guard before the replay cursor can advance past checkpoint acknowledgement.",
+        category: "implementation",
+        status: "running",
+        tokenUsageRatio: 0.42,
+        filesTouchedRatio: 0.5,
+        metadata: socketRecoveryMetadata,
+      },
+      {
+        key: "checkpoint-2",
+        offsetMs: scaleDemoOffset(18_000),
+        eventType: "agent.summary.updated",
+        summary: "Replayed window 17 with the guard enabled and verified no duplicate fan-out events.",
+        category: "test",
+        status: "verifying",
+        tokenUsageRatio: 0.78,
+        filesTouchedRatio: 0.75,
+        metadata: socketRecoveryMetadata,
+      },
+      {
+        key: "final",
+        offsetMs: scaleDemoOffset(25_000),
+        eventType: "agent.session.completed",
+        summary: "Applied the checkpoint guard and replayed the rollback window cleanly.",
+        category: "recovery",
+        status: "completed",
+        tokenUsageRatio: 1,
+        filesTouchedRatio: 1,
+        metadata: socketRecoveryMetadata,
       },
     ],
   },
@@ -828,6 +953,11 @@ const demoEventSeeds: DemoEventSeed[] = [
       status: entry.status,
       tokenUsage: buildTokenCheckpoint(session.tokenUsage, entry.tokenUsageRatio),
       filesTouchedCount: buildFileCheckpoint(session.filesTouchedCount, entry.filesTouchedRatio),
+      durationMs:
+        entry.eventType === "agent.session.completed" || entry.eventType === "agent.session.failed"
+          ? session.durationMs
+          : undefined,
+      metadata: entry.metadata,
     }));
   }),
 ].sort((left, right) => left.offsetMs - right.offsetMs);
@@ -856,6 +986,8 @@ const buildVisibleEvents = (offsetMs: number, demoStartMs: number) =>
             ...(event.status ? { status: event.status } : {}),
             ...(event.tokenUsage != null ? { tokenUsage: event.tokenUsage } : {}),
             ...(event.filesTouchedCount != null ? { filesTouchedCount: event.filesTouchedCount } : {}),
+            ...(event.durationMs != null ? { durationMs: event.durationMs } : {}),
+            ...(event.metadata ? { metadata: event.metadata } : {}),
           },
         };
       }),
@@ -1204,6 +1336,20 @@ export const buildDemoSessionDetail = (sessionId: string, timestampMs: number, d
       .filter((event) => event.sessionId === sessionId)
       .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime()),
   };
+};
+
+export const buildDemoPrimaryIncidentSessionDetail = (demoStartMs: number): SessionDetail | null => {
+  const incidentSession = demoSessionSeeds.find((session) => session.id === demoPrimaryIncidentSessionId);
+
+  if (!incidentSession) {
+    return null;
+  }
+
+  return buildDemoSessionDetail(
+    demoPrimaryIncidentSessionId,
+    demoStartMs + incidentSession.startOffsetMs + incidentSession.durationMs,
+    demoStartMs,
+  );
 };
 
 export const createDemoStartValue = (timestampMs = Date.now()) => timestampMs - demoDefaultOffsetMs;

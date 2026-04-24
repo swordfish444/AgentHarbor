@@ -687,6 +687,17 @@ td strong,
   box-shadow: 0 18px 36px rgba(73, 11, 15, 0.24);
 }
 
+.event-card-warning {
+  border-left: 3px solid rgba(255, 203, 92, 0.72);
+  background: linear-gradient(180deg, rgba(58, 34, 8, 0.46), rgba(9, 23, 37, 0.92));
+}
+
+.event-card-critical {
+  border-left: 3px solid rgba(255, 122, 122, 0.78);
+  background: linear-gradient(180deg, rgba(56, 17, 22, 0.72), rgba(31, 11, 15, 0.92));
+  box-shadow: 0 18px 36px rgba(73, 11, 15, 0.22);
+}
+
 .list-card p,
 .event-card p,
 .alert-card p,
@@ -760,18 +771,25 @@ td strong,
 
 .bar-chart {
   display: grid;
-  gap: 10px;
+  grid-template-columns: fit-content(42%) minmax(64px, 1fr) max-content;
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 10px;
 }
 
 .bar-row {
   display: grid;
-  grid-template-columns: minmax(72px, auto) minmax(0, 1fr) auto;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   align-items: center;
-  gap: 12px;
+  column-gap: inherit;
+  min-width: 0;
 }
 
 .bar-label {
+  min-width: 0;
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .bar-track {
@@ -785,6 +803,12 @@ td strong,
   height: 100%;
   border-radius: 999px;
   background: linear-gradient(90deg, rgba(74, 194, 255, 0.72), rgba(78, 233, 160, 0.72));
+}
+
+.bar-value {
+  justify-self: end;
+  margin-bottom: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .empty-state {
@@ -913,8 +937,26 @@ td strong,
 }
 
 .failure-insight-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(255, 122, 122, 0.22);
+  border-radius: 18px;
+  padding: 16px;
   border-color: rgba(255, 122, 122, 0.22);
   background: linear-gradient(180deg, rgba(56, 17, 22, 0.9), rgba(31, 11, 15, 0.92));
+}
+
+.failure-insight-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.failure-insight-list {
+  margin: 0;
+  padding-left: 18px;
+  color: #edf5ff;
+  line-height: 1.55;
 }
 
 .outcome-card {
@@ -998,6 +1040,11 @@ td strong,
 
 .timeline-dot[data-tone="failed"] {
   background: var(--danger);
+}
+
+.timeline-dot[data-tone="warning"] {
+  background: var(--warning);
+  box-shadow: 0 0 0 6px rgba(255, 203, 92, 0.08);
 }
 
 .timeline-copy {
@@ -1248,12 +1295,25 @@ td strong,
   padding: 13px 16px;
 }
 
+.monitor-table th:not(:first-child),
+.monitor-table td:not(:first-child) {
+  text-align: center;
+}
+
+.monitor-table td:not(:first-child) {
+  font-variant-numeric: tabular-nums;
+}
+
 .monitor-table tbody tr:last-child td {
   border-bottom: none;
 }
 
 .agent-row-running {
   background: linear-gradient(90deg, rgba(74, 194, 255, 0.08), transparent 36%);
+}
+
+.agent-row-error {
+  background: linear-gradient(90deg, rgba(255, 122, 122, 0.13), transparent 36%);
 }
 
 .agent-row-idle {
@@ -1307,6 +1367,24 @@ td strong,
 
 .agent-detail-link:hover {
   color: #9cdcff;
+}
+
+.error-count-link {
+  display: inline-flex;
+  min-width: 32px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 4px 10px;
+  color: var(--danger);
+  text-decoration: none;
+  background: rgba(255, 122, 122, 0.13);
+  border: 1px solid rgba(255, 122, 122, 0.24);
+}
+
+.error-count-link:hover {
+  color: #ffd8d8;
+  border-color: rgba(255, 122, 122, 0.44);
 }
 
 .monitor-empty-row {
@@ -1627,7 +1705,7 @@ td strong,
   }
 
   .agent-alert-grid,
-  .bar-row {
+  .failure-insight-grid {
     grid-template-columns: 1fr;
   }
 

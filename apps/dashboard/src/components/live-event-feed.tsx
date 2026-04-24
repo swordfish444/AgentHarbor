@@ -4,6 +4,18 @@ import { hasActiveDashboardFilters, type DashboardQuery } from "../lib/dashboard
 import { formatTime, humanizeCategory, humanizeEventType } from "../lib/formatters";
 import { DashboardLiveRefresh } from "./dashboard-live-refresh";
 
+const toneForEvent = (event: EventListItem) => {
+  if (event.eventType === "agent.session.failed" || event.payload.status === "failed") {
+    return "critical";
+  }
+
+  if (event.payload.status === "warning" || event.payload.status === "blocked") {
+    return "warning";
+  }
+
+  return "neutral";
+};
+
 export function LiveEventFeed({
   events,
   query,
@@ -42,6 +54,7 @@ export function LiveEventFeed({
       ) : (
         <div className="event-feed">
           {events.map((event) => {
+            const tone = toneForEvent(event);
             const content = (
               <>
                 <div className="list-title-row">
@@ -60,14 +73,14 @@ export function LiveEventFeed({
 
             if (!event.sessionId) {
               return (
-                <div className="event-card" key={event.id}>
+                <div className={`event-card event-card-${tone}`} key={event.id}>
                   {content}
                 </div>
               );
             }
 
             return (
-              <Link className="event-card event-link" href={`/session/${event.sessionId}${detailSearch}`} key={event.id}>
+              <Link className={`event-card event-link event-card-${tone}`} href={`/session/${event.sessionId}${detailSearch}`} key={event.id}>
                 {content}
               </Link>
             );

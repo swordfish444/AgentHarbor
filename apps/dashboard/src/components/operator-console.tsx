@@ -5,7 +5,13 @@ import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { EventListItem, RunnerListItem, SessionListItem, StreamEvent } from "@agentharbor/shared";
 import type { DashboardData } from "../lib/control-node";
-import { buildDemoPlaybackDashboardData, buildDemoSearch, createDemoStartValue } from "../lib/demo-mode";
+import {
+  buildDemoPlaybackDashboardData,
+  buildDemoSearch,
+  createDemoStartValue,
+  demoPrimaryIncidentRunnerId,
+  demoPrimaryIncidentSessionId,
+} from "../lib/demo-mode";
 import { formatInteger, formatRelativeTime, formatTime } from "../lib/formatters";
 import { getRunnerColor } from "../lib/runner-colors";
 
@@ -23,6 +29,7 @@ interface AgentRow {
   startedAt: string | null;
   tasksCompleted: number;
   errors: number;
+  errorSessionId: string | null;
   totalTokens: number;
   isRunning: boolean;
   lastSignalAt: string | null;
@@ -56,7 +63,7 @@ const dedupeById = <T extends { id: string }>(items: T[]) => {
   return [...map.values()];
 };
 
-const buildAgentRows = (data: DashboardData): AgentRow[] => {
+const buildAgentRows = (data: DashboardData, isDemoMode = false): AgentRow[] => {
   const sessionsByRunner = new Map<string, SessionListItem[]>();
 
   for (const session of data.sessions) {
@@ -66,7 +73,7 @@ const buildAgentRows = (data: DashboardData): AgentRow[] => {
   }
 
   return data.runners
-    .filter(isConnectedRunner)
+    .filter((runner) => isConnectedRunner(runner) || (isDemoMode && runner.id === demoPrimaryIncidentRunnerId))
     .map((runner) => {
       const runnerSessions = [...(sessionsByRunner.get(runner.id) ?? [])].sort((left, right) =>
         compareByTimestamp(left.startedAt, right.startedAt),
@@ -74,7 +81,10 @@ const buildAgentRows = (data: DashboardData): AgentRow[] => {
       const latestSession = runnerSessions[0] ?? null;
       const color = getRunnerColor(runner.id);
       const tasksCompleted = runnerSessions.filter((session) => session.status === "completed").length;
-      const errors = runnerSessions.filter((session) => session.status === "failed").length;
+      const failedSessions = runnerSessions.filter((session) => session.status === "failed");
+      const pinnedDemoIncident = isDemoMode && runner.id === demoPrimaryIncidentRunnerId;
+      const errors = pinnedDemoIncident ? Math.max(1, failedSessions.length) : failedSessions.length;
+      const errorSessionId = failedSessions[0]?.id ?? (pinnedDemoIncident ? demoPrimaryIncidentSessionId : null);
       const totalTokens = runnerSessions.reduce((sum, session) => sum + (session.tokenUsage ?? 0), 0);
       const startedAt = latestSession?.startedAt ?? runner.lastSeenAt ?? runner.createdAt;
       const isRunning = latestSession?.status === "running" || runner.activeSessionCount > 0;
@@ -87,6 +97,7 @@ const buildAgentRows = (data: DashboardData): AgentRow[] => {
         startedAt,
         tasksCompleted,
         errors,
+        errorSessionId,
         totalTokens,
         isRunning,
         lastSignalAt: runner.lastSeenAt ?? latestSession?.startedAt ?? runner.updatedAt,
@@ -250,7 +261,7 @@ export function OperatorConsole({
     [data, demoAnchorMs, demoNow, effectiveDemoStart, isDemoMode],
   );
 
-  const agentRows = useMemo(() => buildAgentRows(displayData), [displayData]);
+  const agentRows = useMemo(() => buildAgentRows(displayData, isDemoMode), [displayData, isDemoMode]);
   const connectedAgents = agentRows.length;
   const runningAgents = agentRows.filter((row) => row.isRunning).length;
   const idleAgents = Math.max(0, connectedAgents - runningAgents);
@@ -533,34 +544,50 @@ export function OperatorConsole({
             </thead>
             <tbody>
               {visibleRows.length > 0 ? (
-                visibleRows.map((row) => (
-                  <tr
-                    className={`${row.isRunning ? "agent-row-running" : "agent-row-idle"} ${freshRunnerIds.includes(row.runnerId) ? "agent-row-fresh" : ""}`}
-                    key={row.runnerId}
-                  >
-                    <td>
-                      <div className="agent-name-cell">
-                        <span
-                          aria-hidden="true"
-                          className="agent-dot"
-                          style={{ backgroundColor: row.accent, boxShadow: `0 0 0 6px ${row.accentSoft}` }}
-                        />
-                        <div>
-                          <strong>
-                            <Link className="agent-detail-link" href={`/agents/${row.runnerId}${demoSearch}`}>
-                              {row.name}
-                            </Link>
-                          </strong>
-                          <span className="agent-state-copy">{row.isRunning ? "Running now" : "Idle"}</span>
+                visibleRows.map((row) => {
+                  const agentHref = `/agents/${row.runnerId}${demoSearch}`;
+
+                  return (
+                    <tr
+                      className={`${row.errors > 0 ? "agent-row-error" : row.isRunning ? "agent-row-running" : "agent-row-idle"} ${
+                        freshRunnerIds.includes(row.runnerId) ? "agent-row-fresh" : ""
+                      }`}
+                      key={row.runnerId}
+                    >
+                      <td>
+                        <div className="agent-name-cell">
+                          <span
+                            aria-hidden="true"
+                            className="agent-dot"
+                            style={{ backgroundColor: row.accent, boxShadow: `0 0 0 6px ${row.accentSoft}` }}
+                          />
+                          <div>
+                            <strong>
+                              <Link className="agent-detail-link" href={agentHref}>
+                                {row.name}
+                              </Link>
+                            </strong>
+                            <span className="agent-state-copy">
+                              {row.errors > 0 ? "Error ready to inspect" : row.isRunning ? "Running now" : "Idle"}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td>{formatRelativeTime(row.startedAt, isDemoMode ? demoNow : relativeNow)}</td>
-                    <td>{formatInteger(row.tasksCompleted)}</td>
-                    <td>{formatInteger(row.errors)}</td>
-                    <td>{formatInteger(row.totalTokens)}</td>
-                  </tr>
-                ))
+                      </td>
+                      <td>{formatRelativeTime(row.startedAt, isDemoMode ? demoNow : relativeNow)}</td>
+                      <td>{formatInteger(row.tasksCompleted)}</td>
+                      <td>
+                        {row.errors > 0 && row.errorSessionId ? (
+                          <Link className="error-count-link" href={`/session/${row.errorSessionId}${demoSearch}`}>
+                            {formatInteger(row.errors)}
+                          </Link>
+                        ) : (
+                          formatInteger(row.errors)
+                        )}
+                      </td>
+                      <td>{formatInteger(row.totalTokens)}</td>
+                    </tr>
+                  );
+                })
               ) : (
                 <tr>
                   <td className="monitor-empty-row" colSpan={5}>

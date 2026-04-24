@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { ensureTrailingSlashlessUrl } from "@agentharbor/config";
 import { AgentHarborClient } from "@agentharbor/sdk";
-import type { AgentType, TelemetryEventEnvelope } from "@agentharbor/shared";
+import type { AgentType, TelemetryEventEnvelope, TelemetryEventPayload } from "@agentharbor/shared";
 import { buildDemoReplayPlan, createDemoStartValue } from "@agentharbor/shared";
 import { prisma } from "./prisma.js";
 
@@ -33,6 +33,7 @@ const buildBurstEvent = ({
   status,
   tokenUsage,
   filesTouchedCount,
+  metadata,
 }: {
   eventType: TelemetryEventEnvelope["eventType"];
   agentType: AgentType;
@@ -43,6 +44,7 @@ const buildBurstEvent = ({
   status?: string;
   tokenUsage?: number;
   filesTouchedCount?: number;
+  metadata?: TelemetryEventPayload["metadata"];
 }): TelemetryEventEnvelope => ({
   eventType,
   payload: {
@@ -54,6 +56,7 @@ const buildBurstEvent = ({
     ...(status ? { status } : {}),
     ...(tokenUsage != null ? { tokenUsage } : {}),
     ...(filesTouchedCount != null ? { filesTouchedCount } : {}),
+    ...(metadata ? { metadata } : {}),
   },
 });
 
@@ -91,6 +94,25 @@ export interface DemoBurstResult {
   runnerCount: number;
   eventCount: number;
 }
+
+const burstSocketFailureMetadata = {
+  failureCode: "STREAM-CHECKPOINT-DRIFT",
+  rootCause: "The reconnect path advanced the replay cursor before the checkpoint acknowledgement was persisted.",
+  trigger: "Live burst rollback drill hit a staging socket reset at the first reconnect boundary.",
+  impact: "The rollback drill result is blocked until the checkpoint guard is replayed cleanly.",
+  affectedComponent: "control-node event stream",
+  traceId: "demo-burst-rr-808",
+  evidence: [
+    "Socket reset occurred before checkpoint acknowledgement was written.",
+    "Replay cursor advanced without a matching persisted telemetry event.",
+    "Heartbeat stayed healthy, isolating the issue to stream fan-out instead of runner liveness.",
+  ],
+  nextActions: [
+    "Pause the rollback drill before presenting the replay as valid.",
+    "Apply the persisted cursor guard and replay the checkpoint window.",
+    "Inspect socket fan-out logs using trace demo-burst-rr-808.",
+  ],
+} satisfies NonNullable<TelemetryEventPayload["metadata"]>;
 
 export const resetDemoData = async (client: PrismaClient = prisma): Promise<DemoResetResult> => {
   const demoRunners = await client.runner.findMany({
@@ -384,6 +406,7 @@ export const runDemoBurst = async ({
       status: "warning",
       tokenUsage: 6_100,
       filesTouchedCount: 3,
+      metadata: burstSocketFailureMetadata,
     }),
   );
 
@@ -414,6 +437,7 @@ export const runDemoBurst = async ({
       status: "failed",
       tokenUsage: 8_800,
       filesTouchedCount: 4,
+      metadata: burstSocketFailureMetadata,
     }),
   );
 

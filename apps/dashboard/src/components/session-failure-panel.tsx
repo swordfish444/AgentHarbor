@@ -1,10 +1,11 @@
 import type { SessionDetail } from "@agentharbor/shared";
 import { formatDateTime, formatDurationMs, humanizeCategory, humanizeEventType } from "../lib/formatters";
-import { getSessionFailureSummary, getSessionTerminalEvent } from "../lib/session-detail";
+import { getSessionFailureInsight, getSessionFailureSummary, getSessionTerminalEvent } from "../lib/session-detail";
 import { StatusPill } from "./status-pill";
 
 export function SessionFailurePanel({ session }: { session: SessionDetail }) {
   const failureSummary = getSessionFailureSummary(session);
+  const failureInsight = getSessionFailureInsight(session);
   const terminalEvent = getSessionTerminalEvent(session);
   const tone = session.status === "failed" ? "failed" : session.status === "completed" ? "completed" : "running";
   const title =
@@ -37,6 +38,49 @@ export function SessionFailurePanel({ session }: { session: SessionDetail }) {
       </div>
 
       <p className="outcome-copy">{summary}</p>
+
+      {failureInsight ? (
+        <div className="failure-insight-grid">
+          <div className="failure-insight-card">
+            <span className="row-meta">Root cause</span>
+            <strong>{failureInsight.rootCause ?? "Root cause not classified."}</strong>
+            {failureInsight.trigger ? <p>Trigger: {failureInsight.trigger}</p> : null}
+            {failureInsight.impact ? <p>Impact: {failureInsight.impact}</p> : null}
+          </div>
+
+          <div className="failure-insight-card">
+            <span className="row-meta">Operator handle</span>
+            <strong>{failureInsight.failureCode ?? "Uncoded failure"}</strong>
+            <div className="outcome-meta">
+              {failureInsight.affectedComponent ? <span className="tag">Component: {failureInsight.affectedComponent}</span> : null}
+              {failureInsight.traceId ? <span className="tag">Trace: {failureInsight.traceId}</span> : null}
+              {failureInsight.recoveredFromSessionKey ? <span className="tag">Recovered from: {failureInsight.recoveredFromSessionKey}</span> : null}
+            </div>
+          </div>
+
+          {failureInsight.evidence.length > 0 ? (
+            <div className="failure-insight-card">
+              <span className="row-meta">Evidence</span>
+              <ul className="failure-insight-list">
+                {failureInsight.evidence.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {failureInsight.nextActions.length > 0 ? (
+            <div className="failure-insight-card">
+              <span className="row-meta">Next action</span>
+              <ul className="failure-insight-list">
+                {failureInsight.nextActions.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="outcome-meta">
         <span className="tag">Category: {category}</span>

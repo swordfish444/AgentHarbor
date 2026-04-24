@@ -16,7 +16,7 @@ export function SimpleBarChart({ points }: SimpleBarChartProps) {
           <div className="bar-track">
             <div className="bar-fill" style={{ width: `${(point.value / maxValue) * 100}%` }} />
           </div>
-          <strong>{point.value}</strong>
+          <strong className="bar-value">{point.value}</strong>
         </div>
       ))}
     </div>

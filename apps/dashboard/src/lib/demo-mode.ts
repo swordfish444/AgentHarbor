@@ -1,16 +1,27 @@
 import {
   buildDemoCatalogSnapshot,
+  buildDemoPrimaryIncidentSessionDetail,
   buildDemoSessionDetail as buildSharedDemoSessionDetail,
   createDemoStartValue,
   demoCycleMs,
   demoDefaultOffsetMs,
+  demoPrimaryIncidentRunnerId,
+  demoPrimaryIncidentSessionId,
   getDemoSecurityIncident,
   isKnownDemoRunner,
   type DemoSecurityIncident,
 } from "@agentharbor/shared";
 import type { DashboardData } from "./control-node";
 
-export { createDemoStartValue, demoCycleMs, demoDefaultOffsetMs, getDemoSecurityIncident, isKnownDemoRunner };
+export {
+  createDemoStartValue,
+  demoCycleMs,
+  demoDefaultOffsetMs,
+  demoPrimaryIncidentRunnerId,
+  demoPrimaryIncidentSessionId,
+  getDemoSecurityIncident,
+  isKnownDemoRunner,
+};
 export type { DemoSecurityIncident };
 
 export interface DemoPlaybackState {
@@ -81,7 +92,20 @@ export const buildDemoPlaybackSessionDetail = (
   clockMs: number,
   initialDemoStartMs: number,
   renderedAtMs: number,
-) => buildSharedDemoSessionDetail(sessionId, clockMs, buildDemoPlaybackStartValue(clockMs, initialDemoStartMs, renderedAtMs));
+) => {
+  const playbackDemoStartMs = buildDemoPlaybackStartValue(clockMs, initialDemoStartMs, renderedAtMs);
+  const visibleSession = buildSharedDemoSessionDetail(sessionId, clockMs, playbackDemoStartMs);
+
+  if (sessionId === demoPrimaryIncidentSessionId && visibleSession?.status !== "failed") {
+    return buildDemoPrimaryIncidentSessionDetail(playbackDemoStartMs);
+  }
+
+  if (visibleSession) {
+    return visibleSession;
+  }
+
+  return sessionId === demoPrimaryIncidentSessionId ? buildDemoPrimaryIncidentSessionDetail(playbackDemoStartMs) : null;
+};
 
 export const getDemoPlaybackSecurityIncident = (
   runnerId: string,
