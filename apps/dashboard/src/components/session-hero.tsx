@@ -14,8 +14,8 @@ export function SessionHero({ session, backHref = "/" }: { session: SessionDetai
         : "The session is still active, so the timeline and event feed will keep telling the story as telemetry arrives.";
 
   return (
-    <section className="panel detail-hero" data-status={session.status}>
-      <div>
+    <section className="panel detail-hero session-hero" data-status={session.status}>
+      <div className="session-hero-copy">
         <Link className="back-link" href={backHref}>
           Back to dashboard
         </Link>

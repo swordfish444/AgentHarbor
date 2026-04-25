@@ -1,5 +1,6 @@
 import {
   buildDemoCatalogSnapshot,
+  buildDemoFinalSessionDetail,
   buildDemoPrimaryIncidentSessionDetail,
   buildDemoSessionDetail as buildSharedDemoSessionDetail,
   createDemoStartValue,
@@ -7,6 +8,7 @@ import {
   demoDefaultOffsetMs,
   demoPrimaryIncidentRunnerId,
   demoPrimaryIncidentSessionId,
+  demoPrimaryRecoverySessionId,
   getDemoSecurityIncident,
   isKnownDemoRunner,
   type DemoSecurityIncident,
@@ -19,6 +21,7 @@ export {
   demoDefaultOffsetMs,
   demoPrimaryIncidentRunnerId,
   demoPrimaryIncidentSessionId,
+  demoPrimaryRecoverySessionId,
   getDemoSecurityIncident,
   isKnownDemoRunner,
 };
@@ -27,6 +30,7 @@ export type { DemoSecurityIncident };
 export interface DemoPlaybackState {
   demoStart: number;
   demoAnchor: number;
+  demoResolved?: string | null;
 }
 
 export const demoPlaybackSpeedFactor = 5;
@@ -40,6 +44,9 @@ const parseNumericSearchParam = (value: string | string[] | undefined) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const parseStringSearchParam = (value: string | string[] | undefined) =>
+  typeof value === "string" && value.trim().length > 0 ? value : null;
+
 export const resolveDemoPlaybackState = (
   searchParams: Record<string, string | string[] | undefined>,
   nowMs = Date.now(),
@@ -51,11 +58,16 @@ export const resolveDemoPlaybackState = (
   return {
     demoStart: parseNumericSearchParam(searchParams.demoStart) ?? createDemoStartValue(nowMs),
     demoAnchor: parseNumericSearchParam(searchParams.demoAnchor) ?? nowMs,
+    demoResolved: parseStringSearchParam(searchParams.demoResolved),
   };
 };
 
 export const buildDemoSearch = (demoState: DemoPlaybackState | null | undefined) =>
-  demoState ? `?demo=1&demoStart=${demoState.demoStart}&demoAnchor=${demoState.demoAnchor}` : "";
+  demoState
+    ? `?demo=1&demoStart=${demoState.demoStart}&demoAnchor=${demoState.demoAnchor}${
+        demoState.demoResolved ? `&demoResolved=${encodeURIComponent(demoState.demoResolved)}` : ""
+      }`
+    : "";
 
 const cycleOffset = (timestampMs: number, demoStartMs: number) => {
   const offset = (timestampMs - demoStartMs) % demoCycleMs;
@@ -100,8 +112,16 @@ export const buildDemoPlaybackSessionDetail = (
     return buildDemoPrimaryIncidentSessionDetail(playbackDemoStartMs);
   }
 
+  if (sessionId === demoPrimaryRecoverySessionId && visibleSession?.status !== "completed") {
+    return buildDemoFinalSessionDetail(sessionId, playbackDemoStartMs);
+  }
+
   if (visibleSession) {
     return visibleSession;
+  }
+
+  if (sessionId === demoPrimaryRecoverySessionId) {
+    return buildDemoFinalSessionDetail(sessionId, playbackDemoStartMs);
   }
 
   return sessionId === demoPrimaryIncidentSessionId ? buildDemoPrimaryIncidentSessionDetail(playbackDemoStartMs) : null;

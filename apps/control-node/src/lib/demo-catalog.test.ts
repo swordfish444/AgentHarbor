@@ -21,6 +21,14 @@ test("demo catalog snapshot stays presenter-ready", () => {
   assert.ok(snapshot.sessions.some((session) => session.status === "failed"));
   assert.ok(snapshot.sessions.some((session) => session.status === "running"));
 
+  const stateLabels = snapshot.runners
+    .map((runner) => runner.labels.find((label) => /^state:[A-Z]{2}$/.test(label)))
+    .filter((label): label is string => Boolean(label));
+
+  assert.equal(stateLabels.length, snapshot.runners.length);
+  assert.equal(new Set(stateLabels).size, snapshot.runners.length);
+  assert.ok(snapshot.runners.every((runner) => /'s (MacBook Pro|Mac Studio|MacBook Air)$/.test(runner.machineName)));
+
   const operatorVisibleProblemEvents = snapshot.events.filter(
     (event) => event.payload.status === "warning" || event.payload.status === "failed",
   );
@@ -30,6 +38,8 @@ test("demo catalog snapshot stays presenter-ready", () => {
 
   assert.ok(operatorVisibleProblemEvents.length >= 2);
   assert.equal(primaryFailure?.payload.metadata?.failureCode, "STREAM-CHECKPOINT-DRIFT");
+  assert.equal(primaryFailure?.payload.metadata?.remedyActionLabel, "Apply checkpoint guard");
+  assert.equal(primaryFailure?.payload.metadata?.remedySessionId, "socket-shark-session-3");
   assert.equal(typeof primaryFailure?.payload.metadata?.rootCause, "string");
   assert.ok(Array.isArray(primaryFailure?.payload.metadata?.evidence));
   assert.ok(Array.isArray(primaryFailure?.payload.metadata?.nextActions));

@@ -94,6 +94,10 @@ test("extracts structured failure insight from terminal event metadata", () => {
           affectedComponent: "control-node event stream",
           traceId: "demo-trace-ss-406",
           recoveredFromSessionKey: "SS-406",
+          remedyActionLabel: "Apply checkpoint guard",
+          remedySessionId: "socket-shark-session-3",
+          remedySessionKey: "SS-407",
+          remedyOutcome: "Recovery replay verifies the checkpoint guard.",
           evidence: ["Socket reset preceded checkpoint ack.", "Heartbeat stayed online."],
           nextActions: ["Pause rollback drill.", "Replay with checkpoint guard."],
         },
@@ -110,6 +114,10 @@ test("extracts structured failure insight from terminal event metadata", () => {
     affectedComponent: "control-node event stream",
     traceId: "demo-trace-ss-406",
     recoveredFromSessionKey: "SS-406",
+    remedyActionLabel: "Apply checkpoint guard",
+    remedySessionId: "socket-shark-session-3",
+    remedySessionKey: "SS-407",
+    remedyOutcome: "Recovery replay verifies the checkpoint guard.",
     evidence: ["Socket reset preceded checkpoint ack.", "Heartbeat stayed online."],
     nextActions: ["Pause rollback drill.", "Replay with checkpoint guard."],
     eventType: "Agent / Session / Failed",
@@ -139,4 +147,36 @@ test("failure insight falls back cleanly when metadata is absent", () => {
   ]);
 
   assert.equal(getSessionFailureInsight(session), null);
+});
+
+test("failure insight ignores malformed array metadata entries", () => {
+  const session = buildSession([
+    {
+      id: "event-1",
+      runnerId: "runner-1",
+      runnerName: "mission-codex-1",
+      sessionId: "session-1",
+      sessionKey: "mission-codex-1-blocked",
+      eventType: "agent.session.failed",
+      payload: {
+        timestamp: "2026-04-09T18:04:00.000Z",
+        agentType: "codex",
+        sessionKey: "mission-codex-1-blocked",
+        summary: "Replay failed with partially malformed metadata.",
+        category: "network",
+        status: "failed",
+        metadata: {
+          failureCode: "STREAM-CHECKPOINT-DRIFT",
+          evidence: ["Socket reset preceded checkpoint ack.", 42, "", null] as unknown as string[],
+          nextActions: [false, "Replay with checkpoint guard."] as unknown as string[],
+        },
+      },
+      createdAt: "2026-04-09T18:04:00.000Z",
+    },
+  ]);
+
+  const insight = getSessionFailureInsight(session);
+
+  assert.deepEqual(insight?.evidence, ["Socket reset preceded checkpoint ack."]);
+  assert.deepEqual(insight?.nextActions, ["Replay with checkpoint guard."]);
 });

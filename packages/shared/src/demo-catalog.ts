@@ -122,6 +122,7 @@ const securityIncidentRunnerId = "cipher-coyote";
 const securityIncidentEventId = "cipher-coyote-session-1-security-warning";
 export const demoPrimaryIncidentRunnerId = "socket-shark";
 export const demoPrimaryIncidentSessionId = "socket-shark-session-2";
+export const demoPrimaryRecoverySessionId = "socket-shark-session-3";
 const failureCategories = new Set<EventCategory>(["auth", "build", "failure", "network", "test", "timeout"]);
 
 const secretReviewWarningMetadata = {
@@ -150,6 +151,10 @@ const socketCheckpointFailureMetadata = {
   impact: "The operator cannot trust the first rollback replay until the checkpoint guard is applied.",
   affectedComponent: "control-node event stream",
   traceId: "demo-trace-ss-406",
+  remedyActionLabel: "Apply checkpoint guard",
+  remedySessionId: "socket-shark-session-3",
+  remedySessionKey: "SS-407",
+  remedyOutcome: "Recovery replay verifies the checkpoint guard and gets Socket Shark moving again.",
   evidence: [
     "Socket closed 184ms before the checkpoint acknowledgement landed.",
     "Replay cursor advanced from window 17 to 18 without a persisted checkpoint event.",
@@ -238,67 +243,67 @@ export const demoRunnerSeeds: DemoRunnerSeed[] = [
   {
     id: "merge-marmot",
     name: "Merge Marmot",
-    machineName: "Marmot MBP",
+    machineName: "Casey's MacBook Pro",
     hostname: "merge-marmot.local",
     agentType: "codex",
     joinOffsetMs: 0,
     joinSummary: "Joined Fleet View and picked up the webhook stabilization lane.",
     joinCategory: "session",
     environment: "demo",
-    labels: ["demo", "presentation", "ios", "student-team-a"],
+    labels: ["demo", "presentation", "ios", "student-team-a", "state:WA"],
   },
   {
     id: "patch-panda",
     name: "Patch Panda",
-    machineName: "Panda Studio",
+    machineName: "Jordan's Mac Studio",
     hostname: "patch-panda.local",
     agentType: "claude-code",
     joinOffsetMs: scaleDemoOffset(30_000),
     joinSummary: "Joined Fleet View and moved onto the auth patch rehearsal.",
     joinCategory: "session",
     environment: "demo",
-    labels: ["demo", "presentation", "web", "student-team-b"],
+    labels: ["demo", "presentation", "web", "student-team-b", "state:CA"],
   },
   {
     id: "audit-otter",
     name: "Audit Otter",
-    machineName: "Otter Mini",
+    machineName: "Riley's MacBook Air",
     hostname: "audit-otter.local",
     agentType: "cursor",
     joinOffsetMs: scaleDemoOffset(70_000),
     joinSummary: "Joined Fleet View and started auditing the release readiness queue.",
     joinCategory: "session",
     environment: "demo",
-    labels: ["demo", "presentation", "review", "student-team-a"],
+    labels: ["demo", "presentation", "review", "student-team-a", "state:NY"],
   },
   {
     id: "cipher-coyote",
     name: "Cipher Coyote",
-    machineName: "Coyote Workstation",
+    machineName: "Morgan's MacBook Pro",
     hostname: "cipher-coyote.local",
     agentType: "automation",
     joinOffsetMs: scaleDemoOffset(120_000),
     joinSummary: "Joined Fleet View and began monitoring the security review lane.",
     joinCategory: "auth",
     environment: "demo",
-    labels: ["demo", "presentation", "security", "student-team-b"],
+    labels: ["demo", "presentation", "security", "student-team-b", "state:TX"],
   },
   {
     id: "socket-shark",
     name: "Socket Shark",
-    machineName: "Shark Rack",
+    machineName: "Avery's Mac Studio",
     hostname: "socket-shark.local",
     agentType: "codex",
     joinOffsetMs: scaleDemoOffset(205_000),
     joinSummary: "Joined Fleet View and started rebuilding the streaming path.",
     joinCategory: "network",
     environment: "demo",
-    labels: ["demo", "presentation", "infra", "student-team-a"],
+    labels: ["demo", "presentation", "infra", "student-team-a", "state:FL"],
   },
   {
     id: "stack-sparrow",
     name: "Stack Sparrow",
-    machineName: "Sparrow Air",
+    machineName: "Taylor's MacBook Air",
     hostname: "stack-sparrow.local",
     agentType: "claude-code",
     joinOffsetMs: scaleDemoOffset(330_000),
@@ -306,7 +311,7 @@ export const demoRunnerSeeds: DemoRunnerSeed[] = [
     joinCategory: "session",
     disconnectWindows: [scaleWindow([560_000, 600_000])],
     environment: "demo",
-    labels: ["demo", "presentation", "release", "student-team-b"],
+    labels: ["demo", "presentation", "release", "student-team-b", "state:CO"],
   },
 ];
 
@@ -319,8 +324,8 @@ export const demoSessionSeeds: DemoSessionSeed[] = [
     startOffsetMs: scaleDemoOffset(10_000),
     durationMs: scaleDemoOffset(110_000),
     finalStatus: "completed",
-    summary: "Stabilized webhook retries and closed the backlog on task #12.",
-    runningSummary: "Replaying webhook retries and validating the queue drain on task #12.",
+    summary: "Webhook retries cleared.",
+    runningSummary: "Clearing webhook retries.",
     tokenUsage: 24_300,
     filesTouchedCount: 6,
     timeline: [
@@ -374,8 +379,8 @@ export const demoSessionSeeds: DemoSessionSeed[] = [
     startOffsetMs: scaleDemoOffset(360_000),
     durationMs: scaleDemoOffset(230_000),
     finalStatus: "completed",
-    summary: "Finished the incident write-up and handed findings back to the operator.",
-    runningSummary: "Pulling together the incident write-up and collecting final evidence for review.",
+    summary: "Incident write-up ready.",
+    runningSummary: "Writing incident handoff.",
     tokenUsage: 31_900,
     filesTouchedCount: 9,
     timeline: [
@@ -429,8 +434,8 @@ export const demoSessionSeeds: DemoSessionSeed[] = [
     startOffsetMs: scaleDemoOffset(35_000),
     durationMs: scaleDemoOffset(120_000),
     finalStatus: "completed",
-    summary: "Patched the auth dependency and completed the rollback-safe smoke test.",
-    runningSummary: "Applying the auth patch and replaying smoke coverage against staging.",
+    summary: "Auth patch verified.",
+    runningSummary: "Verifying auth patch.",
     tokenUsage: 28_600,
     filesTouchedCount: 5,
     timeline: [
@@ -484,8 +489,8 @@ export const demoSessionSeeds: DemoSessionSeed[] = [
     startOffsetMs: scaleDemoOffset(255_000),
     durationMs: scaleDemoOffset(125_000),
     finalStatus: "completed",
-    summary: "Verified the refreshed token path and closed the hotfix checklist.",
-    runningSummary: "Validating the refreshed token path before the hotfix checklist closes.",
+    summary: "Token hotfix verified.",
+    runningSummary: "Verifying token hotfix.",
     tokenUsage: 22_200,
     filesTouchedCount: 4,
     timeline: [
@@ -539,8 +544,8 @@ export const demoSessionSeeds: DemoSessionSeed[] = [
     startOffsetMs: scaleDemoOffset(75_000),
     durationMs: scaleDemoOffset(155_000),
     finalStatus: "completed",
-    summary: "Audited the noisy CI lane and trimmed 3 flaky retries from the pipeline.",
-    runningSummary: "Tracing the noisy CI lane and identifying where the flaky retries originate.",
+    summary: "CI retry noise reduced.",
+    runningSummary: "Auditing CI retry noise.",
     tokenUsage: 19_400,
     filesTouchedCount: 3,
     timeline: [
@@ -594,8 +599,8 @@ export const demoSessionSeeds: DemoSessionSeed[] = [
     startOffsetMs: scaleDemoOffset(290_000),
     durationMs: scaleDemoOffset(205_000),
     finalStatus: "completed",
-    summary: "Closed the readiness review and handed back the final checklist for approval.",
-    runningSummary: "Running the readiness review and assembling the final release checklist.",
+    summary: "Release checklist approved.",
+    runningSummary: "Reviewing release readiness.",
     tokenUsage: 26_100,
     filesTouchedCount: 7,
     timeline: [
@@ -649,8 +654,8 @@ export const demoSessionSeeds: DemoSessionSeed[] = [
     startOffsetMs: scaleDemoOffset(125_000),
     durationMs: scaleDemoOffset(360_000),
     finalStatus: "completed",
-    summary: "Investigated a suspicious secrets scan and isolated the package before merge.",
-    runningSummary: "Tracing a suspicious secrets scan and isolating a package before merge.",
+    summary: "Suspicious package isolated.",
+    runningSummary: "Investigating package risk.",
     tokenUsage: 44_900,
     filesTouchedCount: 11,
     timeline: [
@@ -705,8 +710,8 @@ export const demoSessionSeeds: DemoSessionSeed[] = [
     startOffsetMs: scaleDemoOffset(210_000),
     durationMs: scaleDemoOffset(120_000),
     finalStatus: "completed",
-    summary: "Restored the control-node streaming path and verified event fan-out.",
-    runningSummary: "Restoring the control-node streaming path and verifying event fan-out.",
+    summary: "Stream fan-out restored.",
+    runningSummary: "Restoring stream fan-out.",
     tokenUsage: 17_500,
     filesTouchedCount: 4,
     timeline: [
@@ -760,8 +765,8 @@ export const demoSessionSeeds: DemoSessionSeed[] = [
     startOffsetMs: scaleDemoOffset(420_000),
     durationMs: scaleDemoOffset(115_000),
     finalStatus: "failed",
-    summary: "Lost the first replay because the staging socket closed before the checkpoint landed.",
-    runningSummary: "Replaying the staging socket path after the first checkpoint failed to land cleanly.",
+    summary: "Checkpoint replay failed.",
+    runningSummary: "Replaying socket checkpoint.",
     tokenUsage: 15_200,
     filesTouchedCount: 3,
     timeline: [
@@ -817,8 +822,8 @@ export const demoSessionSeeds: DemoSessionSeed[] = [
     startOffsetMs: scaleDemoOffset(545_000),
     durationMs: scaleDemoOffset(25_000),
     finalStatus: "completed",
-    summary: "Applied the checkpoint guard and replayed the rollback window cleanly.",
-    runningSummary: "Applying the checkpoint guard before replaying the rollback window again.",
+    summary: "Checkpoint guard recovered.",
+    runningSummary: "Applying checkpoint guard.",
     tokenUsage: 12_800,
     filesTouchedCount: 4,
     timeline: [
@@ -876,8 +881,8 @@ export const demoSessionSeeds: DemoSessionSeed[] = [
     startOffsetMs: scaleDemoOffset(340_000),
     durationMs: scaleDemoOffset(160_000),
     finalStatus: "completed",
-    summary: "Wrapped the release notes and synchronized the staging rollout checklist.",
-    runningSummary: "Composing release notes and synchronizing the staging rollout checklist.",
+    summary: "Release notes synced.",
+    runningSummary: "Syncing release notes.",
     tokenUsage: 21_700,
     filesTouchedCount: 5,
     timeline: [
@@ -1350,6 +1355,16 @@ export const buildDemoPrimaryIncidentSessionDetail = (demoStartMs: number): Sess
     demoStartMs + incidentSession.startOffsetMs + incidentSession.durationMs,
     demoStartMs,
   );
+};
+
+export const buildDemoFinalSessionDetail = (sessionId: string, demoStartMs: number): SessionDetail | null => {
+  const session = demoSessionSeeds.find((candidate) => candidate.id === sessionId);
+
+  if (!session) {
+    return null;
+  }
+
+  return buildDemoSessionDetail(sessionId, demoStartMs + session.startOffsetMs + session.durationMs, demoStartMs);
 };
 
 export const createDemoStartValue = (timestampMs = Date.now()) => timestampMs - demoDefaultOffsetMs;

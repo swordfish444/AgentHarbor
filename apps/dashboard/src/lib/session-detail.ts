@@ -23,6 +23,10 @@ export interface SessionFailureInsight {
   affectedComponent: string | null;
   traceId: string | null;
   recoveredFromSessionKey: string | null;
+  remedyActionLabel: string | null;
+  remedySessionId: string | null;
+  remedySessionKey: string | null;
+  remedyOutcome: string | null;
   evidence: string[];
   nextActions: string[];
   eventType: string;
@@ -42,6 +46,10 @@ const failureInsightMetadataKeys = new Set([
   "evidence",
   "nextActions",
   "recoveredFromSessionKey",
+  "remedyActionLabel",
+  "remedySessionId",
+  "remedySessionKey",
+  "remedyOutcome",
 ]);
 
 const metadataString = (metadata: EventListItem["payload"]["metadata"] | undefined, key: string) => {
@@ -57,7 +65,7 @@ const metadataStringArray = (metadata: EventListItem["payload"]["metadata"] | un
     return [];
   }
 
-  return value.filter((item) => item.trim().length > 0);
+  return value.filter((item) => typeof item === "string" && item.trim().length > 0);
 };
 
 const hasFailureInsightMetadata = (event: EventListItem) =>
@@ -96,6 +104,10 @@ export function getSessionFailureInsight(session: SessionDetail): SessionFailure
     affectedComponent: metadataString(metadata, "affectedComponent"),
     traceId: metadataString(metadata, "traceId"),
     recoveredFromSessionKey: metadataString(metadata, "recoveredFromSessionKey"),
+    remedyActionLabel: metadataString(metadata, "remedyActionLabel"),
+    remedySessionId: metadataString(metadata, "remedySessionId"),
+    remedySessionKey: metadataString(metadata, "remedySessionKey"),
+    remedyOutcome: metadataString(metadata, "remedyOutcome"),
     evidence: metadataStringArray(metadata, "evidence"),
     nextActions: metadataStringArray(metadata, "nextActions"),
     eventType: humanizeEventType(sourceEvent.eventType),

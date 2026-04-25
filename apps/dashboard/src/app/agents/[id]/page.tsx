@@ -29,6 +29,7 @@ export default async function AgentDetailPage({
           initialDemoEnabled
           initialDemoStart={demoState.demoStart}
           initialDemoAnchor={demoState.demoAnchor}
+          initialDemoResolved={demoState.demoResolved ?? null}
           renderedAt={renderedAt}
         />
       </main>

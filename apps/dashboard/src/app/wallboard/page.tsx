@@ -20,6 +20,7 @@ export default async function WallboardPage({
         initialDemoEnabled={demoState != null}
         initialDemoStart={demoState?.demoStart ?? null}
         initialDemoAnchor={demoState?.demoAnchor ?? null}
+        initialDemoResolved={demoState?.demoResolved ?? null}
         renderedAt={renderedAt}
       />
     </main>

@@ -4,7 +4,14 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { EventListItem, RunnerListItem, SessionListItem } from "@agentharbor/shared";
 import type { DashboardData } from "../lib/control-node";
-import { buildDemoPlaybackDashboardData, buildDemoSearch, getDemoPlaybackSecurityIncident } from "../lib/demo-mode";
+import { pinDemoAgentDetailData } from "../lib/demo-agent-detail";
+import {
+  buildDemoPlaybackDashboardData,
+  buildDemoSearch,
+  demoPrimaryIncidentRunnerId,
+  demoPrimaryIncidentSessionId,
+  getDemoPlaybackSecurityIncident,
+} from "../lib/demo-mode";
 import {
   formatDateTime,
   formatDurationMs,
@@ -66,6 +73,7 @@ export function AgentDetailScreen({
   initialDemoEnabled = false,
   initialDemoStart = null,
   initialDemoAnchor = null,
+  initialDemoResolved = null,
 }: {
   agentId: string;
   initialData: DashboardData;
@@ -73,6 +81,7 @@ export function AgentDetailScreen({
   initialDemoEnabled?: boolean;
   initialDemoStart?: number | null;
   initialDemoAnchor?: number | null;
+  initialDemoResolved?: string | null;
 }) {
   const [demoNow, setDemoNow] = useState(() => new Date(renderedAt).getTime());
   const demoAnchorMs = useMemo(() => initialDemoAnchor ?? new Date(renderedAt).getTime(), [initialDemoAnchor, renderedAt]);
@@ -90,9 +99,13 @@ export function AgentDetailScreen({
     return () => clearInterval(timer);
   }, [initialDemoStart, isDemoMode]);
 
-  const data = useMemo(
+  const playbackData = useMemo(
     () => (isDemoMode && initialDemoStart ? buildDemoPlaybackDashboardData(demoNow, initialDemoStart, demoAnchorMs) : initialData),
     [demoAnchorMs, demoNow, initialData, initialDemoStart, isDemoMode],
+  );
+  const data = useMemo(
+    () => (isDemoMode ? pinDemoAgentDetailData(playbackData, initialData, agentId) : playbackData),
+    [agentId, initialData, isDemoMode, playbackData],
   );
   const runner = data.runners.find((candidate) => candidate.id === agentId) ?? null;
   const sessions = data.sessions.filter((session) => session.runnerId === agentId).sort(sessionSort);
@@ -100,11 +113,13 @@ export function AgentDetailScreen({
   const events = data.events.filter((event) => event.runnerId === agentId).sort(eventSort);
   const securityIncident =
     isDemoMode && initialDemoStart ? getDemoPlaybackSecurityIncident(agentId, demoNow, initialDemoStart, demoAnchorMs) : null;
+  const isPrimaryIncidentResolved =
+    isDemoMode && agentId === demoPrimaryIncidentRunnerId && initialDemoResolved === demoPrimaryIncidentSessionId;
   const status = deriveRunnerStatus(runner, latestSession, Boolean(securityIncident));
   const color = getRunnerColor(agentId);
   const totalTokens = sessions.reduce((sum, session) => sum + (session.tokenUsage ?? 0), 0);
   const completedCount = sessions.filter((session) => session.status === "completed").length;
-  const failedCount = sessions.filter((session) => session.status === "failed").length;
+  const failedCount = sessions.filter((session) => session.status === "failed" && !(isPrimaryIncidentResolved && session.id === demoPrimaryIncidentSessionId)).length;
   const runningCount = sessions.filter((session) => session.status === "running").length;
   const activityPoints = countByLabel(events.map((event) => humanizeCategory(event.payload.category))).slice(0, 5);
   const outcomePoints = [
@@ -113,7 +128,7 @@ export function AgentDetailScreen({
     { label: "Failed", value: failedCount },
     ...(securityIncident ? [{ label: "Security", value: 1 }] : []),
   ].filter((point) => point.value > 0);
-  const liveAlert = !securityIncident ? data.alerts[0] ?? null : null;
+  const liveAlert = !securityIncident && !isPrimaryIncidentResolved ? data.alerts[0] ?? null : null;
   const runnerName = runner?.name ?? latestSession?.runnerName ?? agentId;
   const agentType = latestSession?.agentType ?? (events[0]?.payload.agentType ?? "custom");
   const demoSearch = buildDemoSearch(
@@ -121,6 +136,7 @@ export function AgentDetailScreen({
       ? {
           demoStart: initialDemoStart,
           demoAnchor: demoAnchorMs,
+          demoResolved: initialDemoResolved,
         }
       : null,
   );
