@@ -40,6 +40,14 @@ export type AlertSeverity = (typeof alertSeverities)[number];
 
 export const runnerLabelSchema = z.string().trim().min(1).max(64);
 export const runnerEnvironmentSchema = z.string().trim().min(1).max(64);
+export const telemetryMetadataValueSchema = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.null(),
+  z.array(z.string()),
+]);
+export const telemetryMetadataSchema = z.record(z.string(), telemetryMetadataValueSchema);
 
 const limitQuerySchema = z.coerce.number().int().positive().max(100).optional();
 const optionalQueryStringSchema = z.preprocess(
@@ -103,7 +111,7 @@ export const telemetryEventPayloadSchema = z.object({
   tokenUsage: z.number().int().nonnegative().optional(),
   filesTouchedCount: z.number().int().nonnegative().optional(),
   status: z.string().max(64).optional(),
-  metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
+  metadata: telemetryMetadataSchema.optional(),
 });
 export type TelemetryEventPayload = z.infer<typeof telemetryEventPayloadSchema>;
 
@@ -121,7 +129,7 @@ export type TelemetryIngestRequest = z.infer<typeof telemetryIngestRequestSchema
 export const heartbeatRequestSchema = z.object({
   timestamp: z.string().datetime(),
   activeSessionCount: z.number().int().nonnegative().optional(),
-  metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
+  metadata: telemetryMetadataSchema.optional(),
 });
 export type HeartbeatRequest = z.infer<typeof heartbeatRequestSchema>;
 

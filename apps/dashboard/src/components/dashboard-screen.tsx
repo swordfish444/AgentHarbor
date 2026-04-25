@@ -28,6 +28,7 @@ export function DashboardScreen({
   demoState?: {
     demoStart: number;
     demoAnchor: number;
+    demoResolved?: string | null;
   };
 }) {
   const isDemoMode = demoState != null;

@@ -1,7 +1,7 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { ensureTrailingSlashlessUrl } from "@agentharbor/config";
 import { AgentHarborClient } from "@agentharbor/sdk";
-import type { AgentType, TelemetryEventEnvelope } from "@agentharbor/shared";
+import type { AgentType, TelemetryEventEnvelope, TelemetryEventPayload } from "@agentharbor/shared";
 import { buildDemoReplayPlan, createDemoStartValue } from "@agentharbor/shared";
 import { prisma } from "./prisma.js";
 
@@ -33,6 +33,7 @@ const buildBurstEvent = ({
   status,
   tokenUsage,
   filesTouchedCount,
+  metadata,
 }: {
   eventType: TelemetryEventEnvelope["eventType"];
   agentType: AgentType;
@@ -43,6 +44,7 @@ const buildBurstEvent = ({
   status?: string;
   tokenUsage?: number;
   filesTouchedCount?: number;
+  metadata?: TelemetryEventPayload["metadata"];
 }): TelemetryEventEnvelope => ({
   eventType,
   payload: {
@@ -54,6 +56,7 @@ const buildBurstEvent = ({
     ...(status ? { status } : {}),
     ...(tokenUsage != null ? { tokenUsage } : {}),
     ...(filesTouchedCount != null ? { filesTouchedCount } : {}),
+    ...(metadata ? { metadata } : {}),
   },
 });
 
@@ -91,6 +94,117 @@ export interface DemoBurstResult {
   runnerCount: number;
   eventCount: number;
 }
+
+const burstFailureSessionKey = "RR-808";
+const burstRecoverySessionKey = "RR-809";
+
+type TelemetryMetadata = NonNullable<TelemetryEventPayload["metadata"]>;
+
+const burstSocketFailureMetadataBase = {
+  failureCode: "STREAM-CHECKPOINT-DRIFT",
+  rootCause: "The reconnect path advanced the replay cursor before the checkpoint acknowledgement was persisted.",
+  trigger: "Live burst rollback drill hit a staging socket reset at the first reconnect boundary.",
+  impact: "The rollback drill result is blocked until the checkpoint guard is replayed cleanly.",
+  affectedComponent: "control-node event stream",
+  traceId: "demo-burst-rr-808",
+  evidence: [
+    "Socket reset occurred before checkpoint acknowledgement was written.",
+    "Replay cursor advanced without a matching persisted telemetry event.",
+    "Heartbeat stayed healthy, isolating the issue to stream fan-out instead of runner liveness.",
+  ],
+  nextActions: [
+    "Pause the rollback drill before presenting the replay as valid.",
+    "Apply the persisted cursor guard and replay the checkpoint window.",
+    "Inspect socket fan-out logs using trace demo-burst-rr-808.",
+  ],
+} satisfies TelemetryMetadata;
+
+export const buildBurstSocketFailureMetadata = (
+  recoverySession?: { id: string; sessionKey: string },
+): TelemetryMetadata => ({
+  ...burstSocketFailureMetadataBase,
+  ...(recoverySession
+    ? {
+        recoveredFromSessionKey: burstFailureSessionKey,
+        remedyActionLabel: "Apply checkpoint guard",
+        remedySessionId: recoverySession.id,
+        remedySessionKey: recoverySession.sessionKey,
+        remedyOutcome: "Recovery replay verifies the checkpoint guard and gets Rollback Raven moving again.",
+      }
+    : {}),
+});
+
+const burstSocketRecoveryMetadata = {
+  recoveredFromSessionKey: burstFailureSessionKey,
+  failureCode: "STREAM-CHECKPOINT-DRIFT",
+  rootCause: "Persisted cursor guard now blocks replay cursor advancement until the checkpoint acknowledgement lands.",
+  trigger: "Follow-up replay started after the operator reviewed trace demo-burst-rr-808.",
+  impact: "Rollback replay can continue with a verifiable checkpoint trail.",
+  affectedComponent: "control-node event stream",
+  traceId: "demo-burst-rr-809",
+  evidence: [
+    "Checkpoint acknowledgement persisted before replay cursor advanced.",
+    "Replay window 17 was reprocessed without duplicate fan-out events.",
+    "Rollback Raven heartbeat stayed healthy through the guarded retry.",
+  ],
+  nextActions: [
+    "Resume the rollback drill with the persisted cursor guard enabled.",
+    "Keep the recovery trace pinned beside the original failure trace.",
+  ],
+} satisfies TelemetryMetadata;
+
+const attachBurstFailureRemedy = async () => {
+  const recoverySession = await prisma.agentSession.findUnique({
+    where: {
+      sessionKey: burstRecoverySessionKey,
+    },
+    select: {
+      id: true,
+      sessionKey: true,
+    },
+  });
+
+  if (!recoverySession) {
+    return;
+  }
+
+  const failedEvent = await prisma.telemetryEvent.findFirst({
+    where: {
+      eventType: "agent.session.failed",
+      session: {
+        sessionKey: burstFailureSessionKey,
+      },
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+    select: {
+      id: true,
+      payloadJson: true,
+    },
+  });
+
+  if (
+    !failedEvent ||
+    typeof failedEvent.payloadJson !== "object" ||
+    failedEvent.payloadJson === null ||
+    Array.isArray(failedEvent.payloadJson)
+  ) {
+    return;
+  }
+
+  await prisma.telemetryEvent.update({
+    where: {
+      id: failedEvent.id,
+    },
+    data: {
+      payloadJson: {
+        ...(failedEvent.payloadJson as Record<string, unknown>),
+        metadata: buildBurstSocketFailureMetadata(recoverySession),
+      } as Prisma.InputJsonValue,
+    },
+  });
+};
 
 export const resetDemoData = async (client: PrismaClient = prisma): Promise<DemoResetResult> => {
   const demoRunners = await client.runner.findMany({
@@ -248,7 +362,7 @@ export const runDemoBurst = async ({
       hostname: "rollback-raven.local",
       agentType: "codex" as const,
       labels: ["demo", "presentation", "burst", "incident"],
-      successSessionKey: "RR-808",
+      successSessionKey: burstFailureSessionKey,
     },
   ];
 
@@ -384,6 +498,7 @@ export const runDemoBurst = async ({
       status: "warning",
       tokenUsage: 6_100,
       filesTouchedCount: 3,
+      metadata: buildBurstSocketFailureMetadata(),
     }),
   );
 
@@ -414,8 +529,59 @@ export const runDemoBurst = async ({
       status: "failed",
       tokenUsage: 8_800,
       filesTouchedCount: 4,
+      metadata: buildBurstSocketFailureMetadata(),
     }),
   );
+
+  await emit(
+    failureRunner.client,
+    buildBurstEvent({
+      eventType: "agent.session.started",
+      agentType: failureRunner.agentType,
+      timestamp: new Date().toISOString(),
+      sessionKey: burstRecoverySessionKey,
+      summary: "Started a guarded retry for the rollback checkpoint window.",
+      category: "recovery",
+      status: "running",
+      tokenUsage: 3_200,
+      filesTouchedCount: 2,
+      metadata: burstSocketRecoveryMetadata,
+    }),
+  );
+
+  await emit(
+    failureRunner.client,
+    buildBurstEvent({
+      eventType: "agent.prompt.executed",
+      agentType: failureRunner.agentType,
+      timestamp: new Date().toISOString(),
+      sessionKey: burstRecoverySessionKey,
+      summary: "Applied the persisted cursor guard before advancing the replay cursor.",
+      category: "recovery",
+      status: "running",
+      tokenUsage: 5_900,
+      filesTouchedCount: 3,
+      metadata: burstSocketRecoveryMetadata,
+    }),
+  );
+
+  await emit(
+    failureRunner.client,
+    buildBurstEvent({
+      eventType: "agent.session.completed",
+      agentType: failureRunner.agentType,
+      timestamp: new Date().toISOString(),
+      sessionKey: burstRecoverySessionKey,
+      summary: "Recovery replay completed with the checkpoint guard verified.",
+      category: "recovery",
+      status: "completed",
+      tokenUsage: 8_400,
+      filesTouchedCount: 3,
+      metadata: burstSocketRecoveryMetadata,
+    }),
+  );
+
+  await attachBurstFailureRemedy();
 
   return {
     runnerCount: enrolled.length,

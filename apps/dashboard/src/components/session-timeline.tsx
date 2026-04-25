@@ -6,6 +6,10 @@ const toneForEvent = (event: EventListItem) => {
     return "failed";
   }
 
+  if (event.payload.status === "warning" || event.payload.status === "blocked") {
+    return "warning";
+  }
+
   if (event.eventType === "agent.session.completed" || event.payload.status === "completed") {
     return "completed";
   }

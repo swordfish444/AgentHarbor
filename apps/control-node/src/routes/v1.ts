@@ -18,6 +18,7 @@ import {
   sessionStatuses,
   statsResponseSchema,
   telemetryEventPayloadSchema,
+  telemetryMetadataSchema,
   telemetryIngestRequestSchema,
 } from "@agentharbor/shared";
 import { z } from "zod";
@@ -196,7 +197,7 @@ const legacyTelemetryEventPayloadSchema = z
     tokenUsage: z.number().optional(),
     filesTouchedCount: z.number().optional(),
     status: z.string().optional(),
-    metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
+    metadata: telemetryMetadataSchema.optional(),
   })
   .passthrough();
 

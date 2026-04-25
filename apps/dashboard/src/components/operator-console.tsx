@@ -5,11 +5,17 @@ import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { EventListItem, RunnerListItem, SessionListItem, StreamEvent } from "@agentharbor/shared";
 import type { DashboardData } from "../lib/control-node";
-import { buildDemoPlaybackDashboardData, buildDemoSearch, createDemoStartValue } from "../lib/demo-mode";
+import {
+  buildDemoPlaybackDashboardData,
+  buildDemoSearch,
+  createDemoStartValue,
+  demoPrimaryIncidentRunnerId,
+  demoPrimaryIncidentSessionId,
+} from "../lib/demo-mode";
 import { formatInteger, formatRelativeTime, formatTime } from "../lib/formatters";
 import { getRunnerColor } from "../lib/runner-colors";
 
-const rowsPerPage = 5;
+const rowsPerPage = 6;
 const chatPreviewCharacterThreshold = 140;
 const realtimeEventTypes = ["runner.heartbeat", "telemetry.created", "session.updated", "stats.refresh"] as const;
 
@@ -18,13 +24,17 @@ type StreamState = "connecting" | "live" | "reconnecting";
 interface AgentRow {
   runnerId: string;
   name: string;
+  machineName: string;
+  location: string;
   accent: string;
   accentSoft: string;
   startedAt: string | null;
   tasksCompleted: number;
   errors: number;
+  errorSessionId: string | null;
   totalTokens: number;
   isRunning: boolean;
+  isRecovered: boolean;
   lastSignalAt: string | null;
 }
 
@@ -43,6 +53,12 @@ const compareByTimestamp = (left: string | null | undefined, right: string | nul
 
 const isConnectedRunner = (runner: RunnerListItem) => runner.isOnline || runner.activeSessionCount > 0 || runner.status === "online";
 
+const getRunnerLocation = (runner: RunnerListItem) => {
+  const stateLabel = runner.labels.find((label) => /^state:[a-z]{2}$/i.test(label));
+
+  return stateLabel ? stateLabel.slice("state:".length).toUpperCase() : "N/A";
+};
+
 const isChatworthyEvent = (event: EventListItem) =>
   event.eventType !== "runner.heartbeat" && Boolean(event.payload.summary?.trim());
 
@@ -56,7 +72,7 @@ const dedupeById = <T extends { id: string }>(items: T[]) => {
   return [...map.values()];
 };
 
-const buildAgentRows = (data: DashboardData): AgentRow[] => {
+const buildAgentRows = (data: DashboardData, isDemoMode = false, demoResolvedSessionId: string | null = null): AgentRow[] => {
   const sessionsByRunner = new Map<string, SessionListItem[]>();
 
   for (const session of data.sessions) {
@@ -66,7 +82,7 @@ const buildAgentRows = (data: DashboardData): AgentRow[] => {
   }
 
   return data.runners
-    .filter(isConnectedRunner)
+    .filter((runner) => isConnectedRunner(runner) || (isDemoMode && runner.id === demoPrimaryIncidentRunnerId))
     .map((runner) => {
       const runnerSessions = [...(sessionsByRunner.get(runner.id) ?? [])].sort((left, right) =>
         compareByTimestamp(left.startedAt, right.startedAt),
@@ -74,7 +90,11 @@ const buildAgentRows = (data: DashboardData): AgentRow[] => {
       const latestSession = runnerSessions[0] ?? null;
       const color = getRunnerColor(runner.id);
       const tasksCompleted = runnerSessions.filter((session) => session.status === "completed").length;
-      const errors = runnerSessions.filter((session) => session.status === "failed").length;
+      const failedSessions = runnerSessions.filter((session) => session.status === "failed");
+      const isRecovered = isDemoMode && runner.id === demoPrimaryIncidentRunnerId && demoResolvedSessionId === demoPrimaryIncidentSessionId;
+      const pinnedDemoIncident = isDemoMode && runner.id === demoPrimaryIncidentRunnerId && !isRecovered;
+      const errors = isRecovered ? 0 : pinnedDemoIncident ? Math.max(1, failedSessions.length) : failedSessions.length;
+      const errorSessionId = isRecovered ? null : (failedSessions[0]?.id ?? (pinnedDemoIncident ? demoPrimaryIncidentSessionId : null));
       const totalTokens = runnerSessions.reduce((sum, session) => sum + (session.tokenUsage ?? 0), 0);
       const startedAt = latestSession?.startedAt ?? runner.lastSeenAt ?? runner.createdAt;
       const isRunning = latestSession?.status === "running" || runner.activeSessionCount > 0;
@@ -82,17 +102,25 @@ const buildAgentRows = (data: DashboardData): AgentRow[] => {
       return {
         runnerId: runner.id,
         name: runner.name,
+        machineName: runner.machineName,
+        location: getRunnerLocation(runner),
         accent: color.solid,
         accentSoft: color.soft,
         startedAt,
         tasksCompleted,
         errors,
+        errorSessionId,
         totalTokens,
         isRunning,
+        isRecovered,
         lastSignalAt: runner.lastSeenAt ?? latestSession?.startedAt ?? runner.updatedAt,
       };
     })
     .sort((left, right) => {
+      if (left.errors !== right.errors) {
+        return right.errors - left.errors;
+      }
+
       if (left.isRunning !== right.isRunning) {
         return left.isRunning ? -1 : 1;
       }
@@ -180,12 +208,14 @@ export function OperatorConsole({
   initialDemoEnabled = false,
   initialDemoStart = null,
   initialDemoAnchor = null,
+  initialDemoResolved = null,
 }: {
   initialData: DashboardData;
   renderedAt: string;
   initialDemoEnabled?: boolean;
   initialDemoStart?: number | null;
   initialDemoAnchor?: number | null;
+  initialDemoResolved?: string | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -201,6 +231,7 @@ export function OperatorConsole({
   const [demoStart, setDemoStart] = useState<number | null>(initialDemoStart);
   const [demoNow, setDemoNow] = useState(() => new Date(renderedAt).getTime());
   const [demoAnchorMs, setDemoAnchorMs] = useState(() => initialDemoAnchor ?? new Date(renderedAt).getTime());
+  const [demoResolvedSessionId, setDemoResolvedSessionId] = useState<string | null>(initialDemoResolved);
   const [freshRunnerIds, setFreshRunnerIds] = useState<string[]>([]);
   const chatViewportRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(false);
@@ -250,7 +281,10 @@ export function OperatorConsole({
     [data, demoAnchorMs, demoNow, effectiveDemoStart, isDemoMode],
   );
 
-  const agentRows = useMemo(() => buildAgentRows(displayData), [displayData]);
+  const agentRows = useMemo(
+    () => buildAgentRows(displayData, isDemoMode, demoResolvedSessionId),
+    [demoResolvedSessionId, displayData, isDemoMode],
+  );
   const connectedAgents = agentRows.length;
   const runningAgents = agentRows.filter((row) => row.isRunning).length;
   const idleAgents = Math.max(0, connectedAgents - runningAgents);
@@ -264,6 +298,7 @@ export function OperatorConsole({
       ? {
           demoStart: effectiveDemoStart,
           demoAnchor: demoAnchorMs,
+          demoResolved: demoResolvedSessionId,
         }
       : null,
   );
@@ -447,6 +482,7 @@ export function OperatorConsole({
     if (isDemoMode) {
       setIsDemoMode(false);
       setDemoStart(null);
+      setDemoResolvedSessionId(null);
       router.replace(pathname, { scroll: false });
       return;
     }
@@ -456,6 +492,7 @@ export function OperatorConsole({
     setIsDemoMode(true);
     setDemoAnchorMs(now);
     setDemoStart(nextDemoStart);
+    setDemoResolvedSessionId(null);
     router.replace(
       `${pathname}${buildDemoSearch({
         demoStart: nextDemoStart,
@@ -525,6 +562,8 @@ export function OperatorConsole({
             <thead>
               <tr>
                 <th>Agent</th>
+                <th>Computer Name</th>
+                <th>Location</th>
                 <th>Started at</th>
                 <th>Tasks completed</th>
                 <th>Errors</th>
@@ -533,37 +572,59 @@ export function OperatorConsole({
             </thead>
             <tbody>
               {visibleRows.length > 0 ? (
-                visibleRows.map((row) => (
-                  <tr
-                    className={`${row.isRunning ? "agent-row-running" : "agent-row-idle"} ${freshRunnerIds.includes(row.runnerId) ? "agent-row-fresh" : ""}`}
-                    key={row.runnerId}
-                  >
-                    <td>
-                      <div className="agent-name-cell">
-                        <span
-                          aria-hidden="true"
-                          className="agent-dot"
-                          style={{ backgroundColor: row.accent, boxShadow: `0 0 0 6px ${row.accentSoft}` }}
-                        />
-                        <div>
-                          <strong>
-                            <Link className="agent-detail-link" href={`/agents/${row.runnerId}${demoSearch}`}>
-                              {row.name}
-                            </Link>
-                          </strong>
-                          <span className="agent-state-copy">{row.isRunning ? "Running now" : "Idle"}</span>
+                visibleRows.map((row) => {
+                  const agentHref = `/agents/${row.runnerId}${demoSearch}`;
+
+                  return (
+                    <tr
+                      className={`${row.errors > 0 ? "agent-row-error" : row.isRecovered ? "agent-row-recovered" : row.isRunning ? "agent-row-running" : "agent-row-idle"} ${
+                        freshRunnerIds.includes(row.runnerId) ? "agent-row-fresh" : ""
+                      }`}
+                      key={row.runnerId}
+                    >
+                      <td>
+                        <div className="agent-name-cell">
+                          <span
+                            aria-hidden="true"
+                            className="agent-dot"
+                            style={{ backgroundColor: row.accent, boxShadow: `0 0 0 6px ${row.accentSoft}` }}
+                          />
+                          <div>
+                            <strong>
+                              <Link className="agent-detail-link" href={agentHref}>
+                                {row.name}
+                              </Link>
+                            </strong>
+                            <span className="agent-state-copy">
+                              {row.errors > 0 ? "Error ready to inspect" : row.isRecovered ? "Recovered" : row.isRunning ? "Running now" : "Idle"}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td>{formatRelativeTime(row.startedAt, isDemoMode ? demoNow : relativeNow)}</td>
-                    <td>{formatInteger(row.tasksCompleted)}</td>
-                    <td>{formatInteger(row.errors)}</td>
-                    <td>{formatInteger(row.totalTokens)}</td>
-                  </tr>
-                ))
+                      </td>
+                      <td>
+                        <span className="computer-name-cell">{row.machineName}</span>
+                      </td>
+                      <td>
+                        <span className="location-badge">{row.location}</span>
+                      </td>
+                      <td>{formatRelativeTime(row.startedAt, isDemoMode ? demoNow : relativeNow)}</td>
+                      <td>{formatInteger(row.tasksCompleted)}</td>
+                      <td>
+                        {row.errors > 0 && row.errorSessionId ? (
+                          <Link className="error-count-link" href={`/session/${row.errorSessionId}${demoSearch}`}>
+                            {formatInteger(row.errors)}
+                          </Link>
+                        ) : (
+                          formatInteger(row.errors)
+                        )}
+                      </td>
+                      <td>{formatInteger(row.totalTokens)}</td>
+                    </tr>
+                  );
+                })
               ) : (
                 <tr>
-                  <td className="monitor-empty-row" colSpan={5}>
+                  <td className="monitor-empty-row" colSpan={7}>
                     No connected agents are visible yet.
                   </td>
                 </tr>

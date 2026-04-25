@@ -6,7 +6,12 @@ import { SessionRawEvents } from "../../../components/session-raw-events";
 import { SessionSummaryCards } from "../../../components/session-summary-cards";
 import { SessionTimeline } from "../../../components/session-timeline";
 import { ControlNodeRequestError, getSessionDetail } from "../../../lib/control-node";
-import { buildDemoPlaybackSessionDetail, buildDemoSearch, resolveDemoPlaybackState } from "../../../lib/demo-mode";
+import {
+  buildDemoPlaybackSessionDetail,
+  buildDemoSearch,
+  demoPrimaryIncidentSessionId,
+  resolveDemoPlaybackState,
+} from "../../../lib/demo-mode";
 
 export default async function SessionDetailPage({
   params,
@@ -22,19 +27,31 @@ export default async function SessionDetailPage({
 
   if (demoState) {
     const session = buildDemoPlaybackSessionDetail(id, nowMs, demoState.demoStart, demoState.demoAnchor);
+    const demoSearch = buildDemoSearch(demoState);
 
     if (!session) {
       notFound();
     }
 
+    const backHref =
+      demoState.demoResolved === demoPrimaryIncidentSessionId
+        ? `/wallboard${demoSearch}`
+        : `/agents/${session.runnerId}${demoSearch}`;
+
     return (
       <main className="shell">
-        <SessionHero session={session} backHref={`/agents/${session.runnerId}${buildDemoSearch(demoState)}`} />
+        <SessionHero session={session} backHref={backHref} />
 
         <section className="detail-layout">
           <div className="detail-sidebar-stack">
             <SessionSummaryCards session={session} />
-            <SessionFailurePanel session={session} />
+            <SessionFailurePanel
+              session={session}
+              routeSearch={buildDemoSearch({
+                ...demoState,
+                demoResolved: session.id,
+              })}
+            />
             <SessionEventBreakdown session={session} />
           </div>
           <SessionTimeline events={session.events} />
