@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildDemoCatalogSnapshot, buildDemoReplayPlan, createDemoStartValue } from "@agentharbor/shared";
+import { buildBurstSocketFailureMetadata } from "./demo-harness.js";
 
 test("demo catalog snapshot stays presenter-ready", () => {
   const nowMs = new Date("2026-04-19T18:00:00.000Z").getTime();
@@ -67,4 +68,17 @@ test("demo replay plan preserves structured failure metadata through telemetry p
   assert.equal(replayFailureEvent?.payload.metadata?.failureCode, "STREAM-CHECKPOINT-DRIFT");
   assert.ok(Array.isArray(replayFailureEvent?.payload.metadata?.evidence));
   assert.ok(Array.isArray(replayFailureEvent?.payload.metadata?.nextActions));
+});
+
+test("demo burst failure metadata can link to a recovery session", () => {
+  const metadata = buildBurstSocketFailureMetadata({
+    id: "recovery-session-id",
+    sessionKey: "RR-809",
+  });
+
+  assert.equal(metadata.recoveredFromSessionKey, "RR-808");
+  assert.equal(metadata.remedyActionLabel, "Apply checkpoint guard");
+  assert.equal(metadata.remedySessionId, "recovery-session-id");
+  assert.equal(metadata.remedySessionKey, "RR-809");
+  assert.equal(typeof metadata.remedyOutcome, "string");
 });
