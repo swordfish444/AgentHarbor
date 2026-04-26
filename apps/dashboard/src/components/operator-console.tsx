@@ -14,6 +14,7 @@ import {
 } from "../lib/demo-mode";
 import { formatInteger, formatRelativeTime, formatTime } from "../lib/formatters";
 import { getRunnerColor } from "../lib/runner-colors";
+import { DemoScaleHero } from "./demo-scale-hero";
 
 const rowsPerPage = 6;
 const chatPreviewCharacterThreshold = 140;
@@ -533,6 +534,8 @@ export function OperatorConsole({
           </button>
         </div>
       </header>
+
+      {isDemoMode ? <DemoScaleHero /> : null}
 
       <section className="monitor-metrics">
         <article className="monitor-metric panel">
