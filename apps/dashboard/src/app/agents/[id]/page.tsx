@@ -25,11 +25,12 @@ export default async function AgentDetailPage({
       <main className="shell">
         <AgentDetailScreen
           agentId={id}
-          initialData={buildDemoPlaybackDashboardData(nowMs, demoState.demoStart, demoState.demoAnchor)}
+          initialData={buildDemoPlaybackDashboardData(nowMs, demoState.demoStart, demoState.demoAnchor, demoState.demoSpeed)}
           initialDemoEnabled
           initialDemoStart={demoState.demoStart}
           initialDemoAnchor={demoState.demoAnchor}
           initialDemoResolved={demoState.demoResolved ?? null}
+          initialDemoSpeed={demoState.demoSpeed ?? null}
           renderedAt={renderedAt}
         />
       </main>

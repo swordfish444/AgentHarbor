@@ -123,6 +123,9 @@ const securityIncidentEventId = "cipher-coyote-session-1-security-warning";
 export const demoPrimaryIncidentRunnerId = "socket-shark";
 export const demoPrimaryIncidentSessionId = "socket-shark-session-2";
 export const demoPrimaryRecoverySessionId = "socket-shark-session-3";
+export const demoSecondaryIncidentRunnerId = "stack-sparrow";
+export const demoSecondaryIncidentSessionId = "stack-sparrow-session-2";
+export const demoSecondaryRecoverySessionId = "stack-sparrow-session-3";
 const failureCategories = new Set<EventCategory>(["auth", "build", "failure", "network", "test", "timeout"]);
 
 const secretReviewWarningMetadata = {
@@ -183,6 +186,43 @@ const socketRecoveryMetadata = {
   nextActions: [
     "Let the rollback drill continue with the checkpoint guard enabled.",
     "Keep monitoring the live feed for any repeated socket reset warnings.",
+  ],
+} satisfies NonNullable<TelemetryEventPayload["metadata"]>;
+
+const stackSparrowHeartbeatFailureMetadata = {
+  failureCode: "HEARTBEAT-GAP",
+  rootCause: "Stack Sparrow missed four heartbeat windows during a self-initiated agent runtime restart.",
+  trigger: "Runtime restart began after the agent detected a release-note tooling cache desync.",
+  impact: "Release-note pass paused while the runtime restarted; recovery handler resumed automatically once heartbeats returned.",
+  affectedComponent: "agent runtime heartbeat",
+  traceId: "demo-trace-sp-034",
+  evidence: [
+    "Last heartbeat landed 38 seconds before the gap was detected.",
+    "Telemetry queue depth held at 0 throughout the gap, so no events were dropped.",
+    "Runtime came back online without operator intervention; no checkpoint drift detected.",
+  ],
+  nextActions: [
+    "Wait for the auto-recovery handler to confirm the runtime is healthy.",
+    "Spot-check release-note checklist after the recovery session completes.",
+  ],
+} satisfies NonNullable<TelemetryEventPayload["metadata"]>;
+
+const stackSparrowRecoveryMetadata = {
+  recoveredFromSessionKey: "SP-034",
+  failureCode: "HEARTBEAT-GAP",
+  rootCause: "Heartbeat restored automatically after the runtime restart completed; no operator action required.",
+  trigger: "Runtime self-recovery handler resumed the release-note pass once heartbeats stabilized.",
+  impact: "Release-note pass continued without manual intervention; auto-recovery acknowledged in the timeline.",
+  affectedComponent: "agent runtime heartbeat",
+  traceId: "demo-trace-sp-035",
+  evidence: [
+    "Heartbeats resumed 14 seconds after the runtime restart finished.",
+    "Auto-recovery handler picked up the paused release-note checklist at the last completed step.",
+    "No telemetry was lost during the gap.",
+  ],
+  nextActions: [
+    "Continue monitoring runtime heartbeats for additional gaps.",
+    "File the runtime restart event for post-demo review.",
   ],
 } satisfies NonNullable<TelemetryEventPayload["metadata"]>;
 
@@ -309,7 +349,7 @@ export const demoRunnerSeeds: DemoRunnerSeed[] = [
     joinOffsetMs: scaleDemoOffset(330_000),
     joinSummary: "Joined Fleet View and picked up the release-note coordination pass.",
     joinCategory: "session",
-    disconnectWindows: [scaleWindow([560_000, 600_000])],
+    disconnectWindows: [scaleWindow([405_000, 440_000]), scaleWindow([560_000, 600_000])],
     environment: "demo",
     labels: ["demo", "presentation", "release", "student-team-b", "state:CO"],
   },
@@ -925,6 +965,101 @@ export const demoSessionSeeds: DemoSessionSeed[] = [
         status: "completed",
         tokenUsageRatio: 1,
         filesTouchedRatio: 1,
+      },
+    ],
+  },
+  {
+    id: "stack-sparrow-session-2",
+    runnerId: "stack-sparrow",
+    sessionKey: "SP-034",
+    agentType: "claude-code",
+    startOffsetMs: scaleDemoOffset(395_000),
+    durationMs: scaleDemoOffset(40_000),
+    finalStatus: "failed",
+    summary: "Heartbeat gap during runtime restart.",
+    runningSummary: "Tracking heartbeat gap on Stack Sparrow.",
+    tokenUsage: 9_400,
+    filesTouchedCount: 2,
+    timeline: [
+      {
+        key: "started",
+        offsetMs: 0,
+        eventType: "agent.session.started",
+        summary: "Picked up the next release-note slice while the runtime began a routine self-restart.",
+        category: "session",
+        status: "running",
+        tokenUsageRatio: 0.18,
+        filesTouchedRatio: 0.5,
+      },
+      {
+        key: "warning",
+        offsetMs: scaleDemoOffset(15_000),
+        eventType: "agent.summary.updated",
+        summary: "Heartbeats stalled while the runtime cycled; release-note pass paused mid-step.",
+        category: "network",
+        status: "warning",
+        tokenUsageRatio: 0.5,
+        filesTouchedRatio: 0.75,
+        metadata: stackSparrowHeartbeatFailureMetadata,
+      },
+      {
+        key: "final",
+        offsetMs: scaleDemoOffset(40_000),
+        eventType: "agent.session.failed",
+        summary: "Marked the release-note pass as failed after the heartbeat gap exceeded the runtime restart budget.",
+        category: "network",
+        status: "failed",
+        tokenUsageRatio: 1,
+        filesTouchedRatio: 1,
+        metadata: stackSparrowHeartbeatFailureMetadata,
+      },
+    ],
+  },
+  {
+    id: "stack-sparrow-session-3",
+    runnerId: "stack-sparrow",
+    sessionKey: "SP-035",
+    agentType: "claude-code",
+    startOffsetMs: scaleDemoOffset(450_000),
+    durationMs: scaleDemoOffset(35_000),
+    finalStatus: "completed",
+    summary: "Heartbeat restored, release-note pass auto-resumed.",
+    runningSummary: "Auto-recovering from heartbeat gap.",
+    tokenUsage: 7_200,
+    filesTouchedCount: 2,
+    timeline: [
+      {
+        key: "started",
+        offsetMs: 0,
+        eventType: "agent.session.started",
+        summary: "Auto-recovery handler resumed the release-note pass after heartbeats stabilized.",
+        category: "recovery",
+        status: "running",
+        tokenUsageRatio: 0.2,
+        filesTouchedRatio: 0.5,
+        metadata: stackSparrowRecoveryMetadata,
+      },
+      {
+        key: "checkpoint",
+        offsetMs: scaleDemoOffset(15_000),
+        eventType: "agent.prompt.executed",
+        summary: "Reattached to the paused release-note checklist at the last completed step.",
+        category: "recovery",
+        status: "running",
+        tokenUsageRatio: 0.6,
+        filesTouchedRatio: 0.75,
+        metadata: stackSparrowRecoveryMetadata,
+      },
+      {
+        key: "final",
+        offsetMs: scaleDemoOffset(35_000),
+        eventType: "agent.session.completed",
+        summary: "Closed the auto-recovery and reported runtime heartbeat health back to green.",
+        category: "recovery",
+        status: "completed",
+        tokenUsageRatio: 1,
+        filesTouchedRatio: 1,
+        metadata: stackSparrowRecoveryMetadata,
       },
     ],
   },

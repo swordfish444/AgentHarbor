@@ -14,6 +14,7 @@ import {
 } from "../lib/demo-mode";
 import { formatInteger, formatRelativeTime, formatTime } from "../lib/formatters";
 import { getRunnerColor } from "../lib/runner-colors";
+import { DemoScaleHero } from "./demo-scale-hero";
 
 const rowsPerPage = 6;
 const chatPreviewCharacterThreshold = 140;
@@ -209,6 +210,7 @@ export function OperatorConsole({
   initialDemoStart = null,
   initialDemoAnchor = null,
   initialDemoResolved = null,
+  initialDemoSpeed = null,
 }: {
   initialData: DashboardData;
   renderedAt: string;
@@ -216,6 +218,7 @@ export function OperatorConsole({
   initialDemoStart?: number | null;
   initialDemoAnchor?: number | null;
   initialDemoResolved?: string | null;
+  initialDemoSpeed?: number | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -232,7 +235,31 @@ export function OperatorConsole({
   const [demoNow, setDemoNow] = useState(() => new Date(renderedAt).getTime());
   const [demoAnchorMs, setDemoAnchorMs] = useState(() => initialDemoAnchor ?? new Date(renderedAt).getTime());
   const [demoResolvedSessionId, setDemoResolvedSessionId] = useState<string | null>(initialDemoResolved);
+  const [demoSpeed, setDemoSpeed] = useState<number | null>(initialDemoSpeed);
   const [freshRunnerIds, setFreshRunnerIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    setIsDemoMode(initialDemoEnabled);
+  }, [initialDemoEnabled]);
+
+  useEffect(() => {
+    setDemoStart(initialDemoStart);
+  }, [initialDemoStart]);
+
+  useEffect(() => {
+    if (initialDemoAnchor != null) {
+      setDemoAnchorMs(initialDemoAnchor);
+      setDemoNow(initialDemoAnchor);
+    }
+  }, [initialDemoAnchor]);
+
+  useEffect(() => {
+    setDemoResolvedSessionId(initialDemoResolved);
+  }, [initialDemoResolved]);
+
+  useEffect(() => {
+    setDemoSpeed(initialDemoSpeed);
+  }, [initialDemoSpeed]);
   const chatViewportRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(false);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -277,8 +304,8 @@ export function OperatorConsole({
   }, [isDemoMode]);
 
   const displayData = useMemo(
-    () => (isDemoMode && effectiveDemoStart ? buildDemoPlaybackDashboardData(demoNow, effectiveDemoStart, demoAnchorMs) : data),
-    [data, demoAnchorMs, demoNow, effectiveDemoStart, isDemoMode],
+    () => (isDemoMode && effectiveDemoStart ? buildDemoPlaybackDashboardData(demoNow, effectiveDemoStart, demoAnchorMs, demoSpeed ?? undefined) : data),
+    [data, demoAnchorMs, demoNow, demoSpeed, effectiveDemoStart, isDemoMode],
   );
 
   const agentRows = useMemo(
@@ -299,6 +326,7 @@ export function OperatorConsole({
           demoStart: effectiveDemoStart,
           demoAnchor: demoAnchorMs,
           demoResolved: demoResolvedSessionId,
+          demoSpeed: demoSpeed ?? undefined,
         }
       : null,
   );
@@ -533,6 +561,8 @@ export function OperatorConsole({
           </button>
         </div>
       </header>
+
+      {isDemoMode ? <DemoScaleHero /> : null}
 
       <section className="monitor-metrics">
         <article className="monitor-metric panel">

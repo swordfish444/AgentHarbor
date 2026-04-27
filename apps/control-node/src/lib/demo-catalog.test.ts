@@ -9,9 +9,9 @@ test("demo catalog snapshot stays presenter-ready", () => {
   const snapshot = buildDemoCatalogSnapshot(nowMs, demoStartMs);
 
   assert.equal(snapshot.runners.length, 6);
-  assert.equal(snapshot.sessions.length, 11);
+  assert.equal(snapshot.sessions.length, 13);
   assert.ok(snapshot.events.length >= 35);
-  assert.ok(snapshot.events.length <= 50);
+  assert.ok(snapshot.events.length <= 60);
   assert.equal(snapshot.alerts[0]?.severity, "critical");
   assert.equal(snapshot.alerts[0]?.href, "/session/socket-shark-session-2");
   assert.equal(snapshot.alerts[1]?.severity, "warning");
@@ -44,6 +44,15 @@ test("demo catalog snapshot stays presenter-ready", () => {
   assert.equal(typeof primaryFailure?.payload.metadata?.rootCause, "string");
   assert.ok(Array.isArray(primaryFailure?.payload.metadata?.evidence));
   assert.ok(Array.isArray(primaryFailure?.payload.metadata?.nextActions));
+
+  const heartbeatFailure = snapshot.events.find(
+    (event) => event.sessionId === "stack-sparrow-session-2" && event.eventType === "agent.session.failed",
+  );
+
+  assert.equal(heartbeatFailure?.payload.metadata?.failureCode, "HEARTBEAT-GAP");
+  assert.equal(heartbeatFailure?.payload.metadata?.remedySessionId, undefined);
+  assert.equal(heartbeatFailure?.payload.metadata?.remedyActionLabel, undefined);
+  assert.ok(snapshot.sessions.some((session) => session.id === "stack-sparrow-session-3" && session.status === "completed"));
 });
 
 test("demo replay plan limits heartbeat correction to offline and active runners", () => {
