@@ -31,9 +31,11 @@ export interface DemoPlaybackState {
   demoStart: number;
   demoAnchor: number;
   demoResolved?: string | null;
+  demoSpeed?: number;
 }
 
 export const demoPlaybackSpeedFactor = 5;
+export const demoPlaybackSpeedOptions = [1, 2, 5, 10, 25] as const;
 
 const parseNumericSearchParam = (value: string | string[] | undefined) => {
   if (typeof value !== "string") {
@@ -55,18 +57,25 @@ export const resolveDemoPlaybackState = (
     return null;
   }
 
-  return {
+  const demoSpeedRaw = parseNumericSearchParam(searchParams.demoSpeed);
+  const state: DemoPlaybackState = {
     demoStart: parseNumericSearchParam(searchParams.demoStart) ?? createDemoStartValue(nowMs),
     demoAnchor: parseNumericSearchParam(searchParams.demoAnchor) ?? nowMs,
     demoResolved: parseStringSearchParam(searchParams.demoResolved),
   };
+
+  if (demoSpeedRaw != null && demoSpeedRaw > 0) {
+    state.demoSpeed = demoSpeedRaw;
+  }
+
+  return state;
 };
 
 export const buildDemoSearch = (demoState: DemoPlaybackState | null | undefined) =>
   demoState
     ? `?demo=1&demoStart=${demoState.demoStart}&demoAnchor=${demoState.demoAnchor}${
         demoState.demoResolved ? `&demoResolved=${encodeURIComponent(demoState.demoResolved)}` : ""
-      }`
+      }${demoState.demoSpeed != null ? `&demoSpeed=${demoState.demoSpeed}` : ""}`
     : "";
 
 const cycleOffset = (timestampMs: number, demoStartMs: number) => {
@@ -94,7 +103,8 @@ export const buildDemoPlaybackDashboardData = (
   clockMs: number,
   initialDemoStartMs: number,
   renderedAtMs: number,
-): DashboardData => buildDemoCatalogSnapshot(clockMs, buildDemoPlaybackStartValue(clockMs, initialDemoStartMs, renderedAtMs));
+  speedFactor: number = demoPlaybackSpeedFactor,
+): DashboardData => buildDemoCatalogSnapshot(clockMs, buildDemoPlaybackStartValue(clockMs, initialDemoStartMs, renderedAtMs, speedFactor));
 
 export const buildDemoSessionDetail = (sessionId: string, timestampMs: number, demoStartMs: number) =>
   buildSharedDemoSessionDetail(sessionId, timestampMs, demoStartMs);
@@ -104,8 +114,9 @@ export const buildDemoPlaybackSessionDetail = (
   clockMs: number,
   initialDemoStartMs: number,
   renderedAtMs: number,
+  speedFactor: number = demoPlaybackSpeedFactor,
 ) => {
-  const playbackDemoStartMs = buildDemoPlaybackStartValue(clockMs, initialDemoStartMs, renderedAtMs);
+  const playbackDemoStartMs = buildDemoPlaybackStartValue(clockMs, initialDemoStartMs, renderedAtMs, speedFactor);
   const visibleSession = buildSharedDemoSessionDetail(sessionId, clockMs, playbackDemoStartMs);
 
   if (sessionId === demoPrimaryIncidentSessionId && visibleSession?.status !== "failed") {
@@ -132,4 +143,5 @@ export const getDemoPlaybackSecurityIncident = (
   clockMs: number,
   initialDemoStartMs: number,
   renderedAtMs: number,
-) => getDemoSecurityIncident(runnerId, clockMs, buildDemoPlaybackStartValue(clockMs, initialDemoStartMs, renderedAtMs));
+  speedFactor: number = demoPlaybackSpeedFactor,
+) => getDemoSecurityIncident(runnerId, clockMs, buildDemoPlaybackStartValue(clockMs, initialDemoStartMs, renderedAtMs, speedFactor));

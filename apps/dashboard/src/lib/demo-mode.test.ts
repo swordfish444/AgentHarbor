@@ -107,3 +107,34 @@ test("demo route state preserves the playback anchor in query params", () => {
   });
   assert.equal(buildDemoSearch(demoState), "?demo=1&demoStart=123&demoAnchor=456&demoResolved=socket-shark-session-2");
 });
+
+test("demo route state round-trips a custom playback speed", () => {
+  const demoState = resolveDemoPlaybackState(
+    {
+      demo: "1",
+      demoStart: "100",
+      demoAnchor: "200",
+      demoSpeed: "10",
+    },
+    999,
+  );
+
+  assert.deepEqual(demoState, {
+    demoStart: 100,
+    demoAnchor: 200,
+    demoResolved: null,
+    demoSpeed: 10,
+  });
+  assert.equal(buildDemoSearch(demoState), "?demo=1&demoStart=100&demoAnchor=200&demoSpeed=10");
+});
+
+test("demo playback honors a non-default speed factor", () => {
+  const renderedAtMs = Date.parse("2026-04-22T22:00:00.000Z");
+  const initialDemoStartMs = createDemoStartValue(renderedAtMs);
+  const elapsedMs = 5_000;
+
+  const defaultSnapshot = buildDemoPlaybackDashboardData(renderedAtMs + elapsedMs, initialDemoStartMs, renderedAtMs);
+  const fastSnapshot = buildDemoPlaybackDashboardData(renderedAtMs + elapsedMs, initialDemoStartMs, renderedAtMs, 25);
+
+  assert.notEqual(defaultSnapshot.events.length, fastSnapshot.events.length);
+});

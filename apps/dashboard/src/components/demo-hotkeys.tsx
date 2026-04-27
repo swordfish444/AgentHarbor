@@ -1,12 +1,22 @@
 "use client";
 
-import { demoPrimaryIncidentSessionId } from "@agentharbor/shared";
+import { demoCycleMs, demoPrimaryIncidentSessionId } from "@agentharbor/shared";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+
+const DEFAULT_SPEED = 5;
+const SPEED_KEY_BINDINGS: Array<[string, number]> = [
+  ["1", 1],
+  ["2", 2],
+  ["3", 5],
+  ["4", 10],
+  ["5", 25],
+];
 
 const HOTKEY_BINDINGS: Array<[string, string]> = [
   ["R", "Reset playback to the start of the cycle"],
   ["I", "Jump to the primary incident (SS-406)"],
+  ["1 / 2 / 3 / 4 / 5", "Set playback speed (1x / 2x / 5x / 10x / 25x)"],
   ["Space", "Skip the 3-second remedy delay"],
   ["?", "Toggle this help overlay"],
   ["Esc", "Close this overlay"],
@@ -21,14 +31,27 @@ const isEditableTarget = (target: EventTarget | null) => {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
 };
 
+const cycleOffset = (timestampMs: number, demoStartMs: number) => {
+  const offset = (timestampMs - demoStartMs) % demoCycleMs;
+  return offset >= 0 ? offset : offset + demoCycleMs;
+};
+
+const parseFiniteNumber = (value: string | null): number | null => {
+  if (value == null) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 const buildResetSearch = (nowMs: number) =>
-  `demo=1&demoStart=${nowMs}&demoAnchor=${nowMs}`;
+  `demo=1&demoStart=${nowMs}&demoAnchor=${nowMs}&demoSpeed=${DEFAULT_SPEED}`;
 
 const preserveDemoParams = (search: URLSearchParams, overrides: Record<string, string | null>) => {
   const next = new URLSearchParams();
   next.set("demo", "1");
 
-  for (const key of ["demoStart", "demoAnchor", "demoResolved"]) {
+  for (const key of ["demoStart", "demoAnchor", "demoResolved", "demoSpeed"]) {
     const incoming = search.get(key);
     if (incoming != null) {
       next.set(key, incoming);
@@ -44,6 +67,22 @@ const preserveDemoParams = (search: URLSearchParams, overrides: Record<string, s
   }
 
   return next.toString();
+};
+
+const buildSpeedChangeSearch = (search: URLSearchParams, newSpeed: number, nowMs: number) => {
+  const oldDemoStart = parseFiniteNumber(search.get("demoStart")) ?? nowMs;
+  const oldAnchor = parseFiniteNumber(search.get("demoAnchor")) ?? nowMs;
+  const oldSpeed = parseFiniteNumber(search.get("demoSpeed")) ?? DEFAULT_SPEED;
+  const initialOffset = cycleOffset(oldAnchor, oldDemoStart);
+  const elapsed = Math.max(0, nowMs - oldAnchor);
+  const currentOffset = (initialOffset + elapsed * oldSpeed) % demoCycleMs;
+  const newDemoStart = nowMs - currentOffset;
+
+  return preserveDemoParams(search, {
+    demoStart: String(newDemoStart),
+    demoAnchor: String(nowMs),
+    demoSpeed: String(newSpeed),
+  });
 };
 
 export function DemoHotkeys() {
@@ -102,6 +141,16 @@ export function DemoHotkeys() {
         event.preventDefault();
         const next = preserveDemoParams(new URLSearchParams(searchParams?.toString() ?? ""), {});
         router.push(`/session/${demoPrimaryIncidentSessionId}?${next}`);
+        return;
+      }
+
+      const speedBinding = SPEED_KEY_BINDINGS.find(([candidate]) => candidate === key);
+      if (speedBinding) {
+        event.preventDefault();
+        const [, newSpeed] = speedBinding;
+        const nowMs = Date.now();
+        const next = buildSpeedChangeSearch(new URLSearchParams(searchParams?.toString() ?? ""), newSpeed, nowMs);
+        router.push(`${pathname ?? "/"}?${next}`);
         return;
       }
     };
