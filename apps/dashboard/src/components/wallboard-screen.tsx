@@ -9,6 +9,7 @@ export function WallboardScreen({
   initialDemoAnchor = null,
   initialDemoResolved = null,
   initialDemoSpeed = null,
+  initialDemoPaused = false,
 }: {
   data: DashboardData;
   renderedAt: string;
@@ -17,6 +18,7 @@ export function WallboardScreen({
   initialDemoAnchor?: number | null;
   initialDemoResolved?: string | null;
   initialDemoSpeed?: number | null;
+  initialDemoPaused?: boolean;
 }) {
   return (
     <OperatorConsole
@@ -26,6 +28,7 @@ export function WallboardScreen({
       initialDemoAnchor={initialDemoAnchor}
       initialDemoResolved={initialDemoResolved}
       initialDemoSpeed={initialDemoSpeed}
+      initialDemoPaused={initialDemoPaused}
       renderedAt={renderedAt}
     />
   );

@@ -21,16 +21,19 @@ export default async function AgentDetailPage({
       notFound();
     }
 
+    const effectiveDemoSpeed = demoState.demoPaused ? 0 : demoState.demoSpeed;
+
     return (
       <main className="shell">
         <AgentDetailScreen
           agentId={id}
-          initialData={buildDemoPlaybackDashboardData(nowMs, demoState.demoStart, demoState.demoAnchor, demoState.demoSpeed)}
+          initialData={buildDemoPlaybackDashboardData(nowMs, demoState.demoStart, demoState.demoAnchor, effectiveDemoSpeed)}
           initialDemoEnabled
           initialDemoStart={demoState.demoStart}
           initialDemoAnchor={demoState.demoAnchor}
           initialDemoResolved={demoState.demoResolved ?? null}
           initialDemoSpeed={demoState.demoSpeed ?? null}
+          initialDemoPaused={demoState.demoPaused ?? false}
           renderedAt={renderedAt}
         />
       </main>

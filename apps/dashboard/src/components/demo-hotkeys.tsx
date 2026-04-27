@@ -16,6 +16,7 @@ const SPEED_KEY_BINDINGS: Array<[string, number]> = [
 const HOTKEY_BINDINGS: Array<[string, string]> = [
   ["R", "Reset playback to the start of the cycle"],
   ["I", "Jump to the primary incident (SS-406)"],
+  ["P", "Pause / resume playback"],
   ["1 / 2 / 3 / 4 / 5", "Set playback speed (1x / 2x / 5x / 10x / 25x)"],
   ["Space", "Skip the 3-second remedy delay"],
   ["?", "Toggle this help overlay"],
@@ -51,7 +52,7 @@ const preserveDemoParams = (search: URLSearchParams, overrides: Record<string, s
   const next = new URLSearchParams();
   next.set("demo", "1");
 
-  for (const key of ["demoStart", "demoAnchor", "demoResolved", "demoSpeed"]) {
+  for (const key of ["demoStart", "demoAnchor", "demoResolved", "demoSpeed", "demoPaused"]) {
     const incoming = search.get(key);
     if (incoming != null) {
       next.set(key, incoming);
@@ -69,19 +70,37 @@ const preserveDemoParams = (search: URLSearchParams, overrides: Record<string, s
   return next.toString();
 };
 
-const buildSpeedChangeSearch = (search: URLSearchParams, newSpeed: number, nowMs: number) => {
+const computeCurrentOffset = (search: URLSearchParams, nowMs: number) => {
   const oldDemoStart = parseFiniteNumber(search.get("demoStart")) ?? nowMs;
   const oldAnchor = parseFiniteNumber(search.get("demoAnchor")) ?? nowMs;
   const oldSpeed = parseFiniteNumber(search.get("demoSpeed")) ?? DEFAULT_SPEED;
+  const wasPaused = search.get("demoPaused") === "1";
+  const effectiveOldSpeed = wasPaused ? 0 : oldSpeed;
   const initialOffset = cycleOffset(oldAnchor, oldDemoStart);
   const elapsed = Math.max(0, nowMs - oldAnchor);
-  const currentOffset = (initialOffset + elapsed * oldSpeed) % demoCycleMs;
+  return (initialOffset + elapsed * effectiveOldSpeed) % demoCycleMs;
+};
+
+const buildSpeedChangeSearch = (search: URLSearchParams, newSpeed: number, nowMs: number) => {
+  const currentOffset = computeCurrentOffset(search, nowMs);
   const newDemoStart = nowMs - currentOffset;
 
   return preserveDemoParams(search, {
     demoStart: String(newDemoStart),
     demoAnchor: String(nowMs),
     demoSpeed: String(newSpeed),
+  });
+};
+
+const buildPauseToggleSearch = (search: URLSearchParams, nowMs: number) => {
+  const wasPaused = search.get("demoPaused") === "1";
+  const currentOffset = computeCurrentOffset(search, nowMs);
+  const newDemoStart = nowMs - currentOffset;
+
+  return preserveDemoParams(search, {
+    demoStart: String(newDemoStart),
+    demoAnchor: String(nowMs),
+    demoPaused: wasPaused ? null : "1",
   });
 };
 
@@ -141,6 +160,14 @@ export function DemoHotkeys() {
         event.preventDefault();
         const next = preserveDemoParams(new URLSearchParams(searchParams?.toString() ?? ""), {});
         router.push(`/session/${demoPrimaryIncidentSessionId}?${next}`);
+        return;
+      }
+
+      if (key === "p" || key === "P") {
+        event.preventDefault();
+        const nowMs = Date.now();
+        const next = buildPauseToggleSearch(new URLSearchParams(searchParams?.toString() ?? ""), nowMs);
+        router.push(`${pathname ?? "/"}?${next}`);
         return;
       }
 

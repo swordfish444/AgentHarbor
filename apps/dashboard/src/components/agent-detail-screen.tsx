@@ -75,6 +75,7 @@ export function AgentDetailScreen({
   initialDemoAnchor = null,
   initialDemoResolved = null,
   initialDemoSpeed = null,
+  initialDemoPaused = false,
 }: {
   agentId: string;
   initialData: DashboardData;
@@ -84,10 +85,12 @@ export function AgentDetailScreen({
   initialDemoAnchor?: number | null;
   initialDemoResolved?: string | null;
   initialDemoSpeed?: number | null;
+  initialDemoPaused?: boolean;
 }) {
   const [demoNow, setDemoNow] = useState(() => new Date(renderedAt).getTime());
   const demoAnchorMs = useMemo(() => initialDemoAnchor ?? new Date(renderedAt).getTime(), [initialDemoAnchor, renderedAt]);
   const isDemoMode = initialDemoEnabled && initialDemoStart != null;
+  const effectivePlaybackSpeed = initialDemoPaused ? 0 : initialDemoSpeed ?? undefined;
 
   useEffect(() => {
     if (!isDemoMode || initialDemoStart == null) {
@@ -101,11 +104,11 @@ export function AgentDetailScreen({
     }, 2_000);
 
     return () => clearInterval(timer);
-  }, [initialDemoStart, initialDemoAnchor, initialDemoSpeed, isDemoMode]);
+  }, [initialDemoStart, initialDemoAnchor, initialDemoSpeed, initialDemoPaused, isDemoMode]);
 
   const playbackData = useMemo(
-    () => (isDemoMode && initialDemoStart ? buildDemoPlaybackDashboardData(demoNow, initialDemoStart, demoAnchorMs, initialDemoSpeed ?? undefined) : initialData),
-    [demoAnchorMs, demoNow, initialData, initialDemoSpeed, initialDemoStart, isDemoMode],
+    () => (isDemoMode && initialDemoStart ? buildDemoPlaybackDashboardData(demoNow, initialDemoStart, demoAnchorMs, effectivePlaybackSpeed) : initialData),
+    [demoAnchorMs, demoNow, initialData, effectivePlaybackSpeed, initialDemoStart, isDemoMode],
   );
   const data = useMemo(
     () => (isDemoMode ? pinDemoAgentDetailData(playbackData, initialData, agentId) : playbackData),
@@ -116,7 +119,7 @@ export function AgentDetailScreen({
   const latestSession = sessions[0] ?? null;
   const events = data.events.filter((event) => event.runnerId === agentId).sort(eventSort);
   const securityIncident =
-    isDemoMode && initialDemoStart ? getDemoPlaybackSecurityIncident(agentId, demoNow, initialDemoStart, demoAnchorMs, initialDemoSpeed ?? undefined) : null;
+    isDemoMode && initialDemoStart ? getDemoPlaybackSecurityIncident(agentId, demoNow, initialDemoStart, demoAnchorMs, effectivePlaybackSpeed) : null;
   const isPrimaryIncidentResolved =
     isDemoMode && agentId === demoPrimaryIncidentRunnerId && initialDemoResolved === demoPrimaryIncidentSessionId;
   const status = deriveRunnerStatus(runner, latestSession, Boolean(securityIncident));
@@ -142,6 +145,7 @@ export function AgentDetailScreen({
           demoAnchor: demoAnchorMs,
           demoResolved: initialDemoResolved,
           demoSpeed: initialDemoSpeed ?? undefined,
+          demoPaused: initialDemoPaused || undefined,
         }
       : null,
   );

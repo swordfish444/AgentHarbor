@@ -138,3 +138,29 @@ test("demo playback honors a non-default speed factor", () => {
 
   assert.notEqual(defaultSnapshot.events.length, fastSnapshot.events.length);
 });
+
+test("demo route state round-trips a paused playback", () => {
+  const demoState = resolveDemoPlaybackState(
+    {
+      demo: "1",
+      demoStart: "100",
+      demoAnchor: "200",
+      demoPaused: "1",
+    },
+    999,
+  );
+
+  assert.equal(demoState?.demoPaused, true);
+  assert.equal(buildDemoSearch(demoState), "?demo=1&demoStart=100&demoAnchor=200&demoPaused=1");
+});
+
+test("demo playback at speed zero freezes the offset across wall-clock advancement", () => {
+  const renderedAtMs = Date.parse("2026-04-22T22:00:00.000Z");
+  const initialDemoStartMs = createDemoStartValue(renderedAtMs);
+
+  const earlySnapshot = buildDemoPlaybackDashboardData(renderedAtMs + 1_000, initialDemoStartMs, renderedAtMs, 0);
+  const lateSnapshot = buildDemoPlaybackDashboardData(renderedAtMs + 30_000, initialDemoStartMs, renderedAtMs, 0);
+
+  assert.equal(earlySnapshot.events.length, lateSnapshot.events.length);
+  assert.equal(earlySnapshot.sessions.length, lateSnapshot.sessions.length);
+});

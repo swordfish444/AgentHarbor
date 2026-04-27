@@ -211,6 +211,7 @@ export function OperatorConsole({
   initialDemoAnchor = null,
   initialDemoResolved = null,
   initialDemoSpeed = null,
+  initialDemoPaused = false,
 }: {
   initialData: DashboardData;
   renderedAt: string;
@@ -219,6 +220,7 @@ export function OperatorConsole({
   initialDemoAnchor?: number | null;
   initialDemoResolved?: string | null;
   initialDemoSpeed?: number | null;
+  initialDemoPaused?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -236,6 +238,7 @@ export function OperatorConsole({
   const [demoAnchorMs, setDemoAnchorMs] = useState(() => initialDemoAnchor ?? new Date(renderedAt).getTime());
   const [demoResolvedSessionId, setDemoResolvedSessionId] = useState<string | null>(initialDemoResolved);
   const [demoSpeed, setDemoSpeed] = useState<number | null>(initialDemoSpeed);
+  const [demoPaused, setDemoPaused] = useState<boolean>(initialDemoPaused);
   const [freshRunnerIds, setFreshRunnerIds] = useState<string[]>([]);
 
   useEffect(() => {
@@ -260,6 +263,10 @@ export function OperatorConsole({
   useEffect(() => {
     setDemoSpeed(initialDemoSpeed);
   }, [initialDemoSpeed]);
+
+  useEffect(() => {
+    setDemoPaused(initialDemoPaused);
+  }, [initialDemoPaused]);
   const chatViewportRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(false);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -303,9 +310,10 @@ export function OperatorConsole({
     return () => clearInterval(clock);
   }, [isDemoMode]);
 
+  const effectivePlaybackSpeed = demoPaused ? 0 : demoSpeed ?? undefined;
   const displayData = useMemo(
-    () => (isDemoMode && effectiveDemoStart ? buildDemoPlaybackDashboardData(demoNow, effectiveDemoStart, demoAnchorMs, demoSpeed ?? undefined) : data),
-    [data, demoAnchorMs, demoNow, demoSpeed, effectiveDemoStart, isDemoMode],
+    () => (isDemoMode && effectiveDemoStart ? buildDemoPlaybackDashboardData(demoNow, effectiveDemoStart, demoAnchorMs, effectivePlaybackSpeed) : data),
+    [data, demoAnchorMs, demoNow, effectivePlaybackSpeed, effectiveDemoStart, isDemoMode],
   );
 
   const agentRows = useMemo(
@@ -327,6 +335,7 @@ export function OperatorConsole({
           demoAnchor: demoAnchorMs,
           demoResolved: demoResolvedSessionId,
           demoSpeed: demoSpeed ?? undefined,
+          demoPaused: demoPaused || undefined,
         }
       : null,
   );
@@ -542,9 +551,9 @@ export function OperatorConsole({
         </div>
 
         <div className="wallboard-header-actions">
-          <span className={`stream-indicator stream-${displayStreamState}`}>
+          <span className={`stream-indicator stream-${isDemoMode && demoPaused ? "paused" : displayStreamState}`}>
             <span className="stream-dot" />
-            {isDemoMode ? "Demo live" : displayStreamState === "live" ? "Live" : displayStreamState === "connecting" ? "Connecting" : "Reconnecting"}
+            {isDemoMode ? (demoPaused ? "Demo paused" : "Demo live") : displayStreamState === "live" ? "Live" : displayStreamState === "connecting" ? "Connecting" : "Reconnecting"}
           </span>
           <span className="monitor-meta-text">
             {displayLastSignalAt ? `Last signal ${formatRelativeTime(displayLastSignalAt, isDemoMode ? demoNow : relativeNow)}` : "Awaiting live signals"}

@@ -26,7 +26,8 @@ export default async function SessionDetailPage({
   const demoState = resolveDemoPlaybackState(resolvedSearchParams, nowMs);
 
   if (demoState) {
-    const session = buildDemoPlaybackSessionDetail(id, nowMs, demoState.demoStart, demoState.demoAnchor, demoState.demoSpeed);
+    const effectiveDemoSpeed = demoState.demoPaused ? 0 : demoState.demoSpeed;
+    const session = buildDemoPlaybackSessionDetail(id, nowMs, demoState.demoStart, demoState.demoAnchor, effectiveDemoSpeed);
     const demoSearch = buildDemoSearch(demoState);
 
     if (!session) {

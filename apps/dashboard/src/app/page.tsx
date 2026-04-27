@@ -14,7 +14,8 @@ export default async function HomePage({
   const query = demoState ? {} : normalizeDashboardQuery(resolvedSearchParams);
 
   if (demoState) {
-    const demoData = buildDemoPlaybackDashboardData(nowMs, demoState.demoStart, demoState.demoAnchor, demoState.demoSpeed);
+    const effectiveSpeed = demoState.demoPaused ? 0 : demoState.demoSpeed;
+    const demoData = buildDemoPlaybackDashboardData(nowMs, demoState.demoStart, demoState.demoAnchor, effectiveSpeed);
 
     return (
       <main className="shell">

@@ -11,7 +11,8 @@ export default async function WallboardPage({
   const nowMs = Date.now();
   const demoState = resolveDemoPlaybackState(resolvedSearchParams, nowMs);
   const renderedAt = new Date(nowMs).toISOString();
-  const data = demoState ? buildDemoPlaybackDashboardData(nowMs, demoState.demoStart, demoState.demoAnchor, demoState.demoSpeed) : (await getDashboardData({})).data;
+  const effectiveDemoSpeed = demoState?.demoPaused ? 0 : demoState?.demoSpeed;
+  const data = demoState ? buildDemoPlaybackDashboardData(nowMs, demoState.demoStart, demoState.demoAnchor, effectiveDemoSpeed) : (await getDashboardData({})).data;
 
   return (
     <main className="shell">
@@ -22,6 +23,7 @@ export default async function WallboardPage({
         initialDemoAnchor={demoState?.demoAnchor ?? null}
         initialDemoResolved={demoState?.demoResolved ?? null}
         initialDemoSpeed={demoState?.demoSpeed ?? null}
+        initialDemoPaused={demoState?.demoPaused ?? false}
         renderedAt={renderedAt}
       />
     </main>

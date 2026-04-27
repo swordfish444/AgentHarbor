@@ -1519,6 +1519,15 @@ td strong,
   background: var(--warning);
 }
 
+.stream-paused {
+  color: var(--muted, #8b94a3);
+}
+
+.stream-paused .stream-dot {
+  background: var(--muted, #8b94a3);
+  animation: none;
+}
+
 .monitor-table-wrap,
 .chat-scroll-frame {
   border: 1px solid rgba(132, 195, 232, 0.08);

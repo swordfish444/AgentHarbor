@@ -32,6 +32,7 @@ export interface DemoPlaybackState {
   demoAnchor: number;
   demoResolved?: string | null;
   demoSpeed?: number;
+  demoPaused?: boolean;
 }
 
 export const demoPlaybackSpeedFactor = 5;
@@ -68,6 +69,10 @@ export const resolveDemoPlaybackState = (
     state.demoSpeed = demoSpeedRaw;
   }
 
+  if (searchParams.demoPaused === "1") {
+    state.demoPaused = true;
+  }
+
   return state;
 };
 
@@ -75,7 +80,7 @@ export const buildDemoSearch = (demoState: DemoPlaybackState | null | undefined)
   demoState
     ? `?demo=1&demoStart=${demoState.demoStart}&demoAnchor=${demoState.demoAnchor}${
         demoState.demoResolved ? `&demoResolved=${encodeURIComponent(demoState.demoResolved)}` : ""
-      }${demoState.demoSpeed != null ? `&demoSpeed=${demoState.demoSpeed}` : ""}`
+      }${demoState.demoSpeed != null ? `&demoSpeed=${demoState.demoSpeed}` : ""}${demoState.demoPaused ? "&demoPaused=1" : ""}`
     : "";
 
 const cycleOffset = (timestampMs: number, demoStartMs: number) => {
