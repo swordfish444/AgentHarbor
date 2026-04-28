@@ -1,5 +1,6 @@
 interface SimpleBarChartProps {
   points: Array<{
+    key?: string;
     label: string;
     value: number;
   }>;
@@ -10,8 +11,8 @@ export function SimpleBarChart({ points }: SimpleBarChartProps) {
 
   return (
     <div className="bar-chart">
-      {points.map((point) => (
-        <div className="bar-row" key={point.label}>
+      {points.map((point, index) => (
+        <div className="bar-row" key={point.key ?? `${point.label}-${index}`}>
           <span className="bar-label">{point.label}</span>
           <div className="bar-track">
             <div className="bar-fill" style={{ width: `${(point.value / maxValue) * 100}%` }} />

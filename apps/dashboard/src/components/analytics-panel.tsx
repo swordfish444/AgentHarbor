@@ -13,6 +13,7 @@ export function AnalyticsPanel({ analytics }: { analytics: DashboardAnalytics })
       title: "Agent mix",
       description: "Sessions by agent type in the current dashboard window.",
       points: analytics.agentTypes.items.slice(0, 5).map((item) => ({
+        key: item.key,
         label: item.label,
         value: item.count,
       })),
@@ -22,6 +23,7 @@ export function AnalyticsPanel({ analytics }: { analytics: DashboardAnalytics })
       title: "Failure categories",
       description: "The failure modes currently surfacing most often.",
       points: analytics.failures.items.slice(0, 5).map((item) => ({
+        key: item.key,
         label: item.label,
         value: item.count,
       })),
@@ -31,6 +33,7 @@ export function AnalyticsPanel({ analytics }: { analytics: DashboardAnalytics })
       title: "Runner activity",
       description: "Which runners are carrying the most sessions right now.",
       points: analytics.runnerActivity.items.slice(0, 5).map((item) => ({
+        key: item.runnerId,
         label: item.runnerName,
         value: item.sessionCount,
       })),
@@ -40,6 +43,7 @@ export function AnalyticsPanel({ analytics }: { analytics: DashboardAnalytics })
       title: "Telemetry volume",
       description: "Recent event throughput in five-minute buckets.",
       points: analytics.eventTimeseries.points.slice(-8).map((point) => ({
+        key: point.bucketStart,
         label: timeFormatter.format(new Date(point.bucketStart)),
         value: point.count,
       })),
