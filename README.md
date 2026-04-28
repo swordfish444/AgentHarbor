@@ -4,21 +4,23 @@
 
 # AgentHarbor
 
-**AgentHarbor is a control tower for AI coding agents: run one control node, add a tiny runner to each machine, and watch every Codex, Claude Code, Cursor, or automation agent from one live fleet dashboard.**
+**AgentHarbor is an open source observability plane for engineering teams running many AI coding agents across many people and machines.**
 
-AgentHarbor began as a Washington State University senior design project and is now open sourced for teams learning how to operate many AI agents safely.
+When every engineer has Codex, Claude Code, Cursor, or local automation agents running on different laptops and workstations, the team loses the shared picture: which agents are connected, what work is active, where failures are happening, and which session needs attention. AgentHarbor gives the team one live control-tower view without trying to orchestrate or control the agents.
+
+AgentHarbor began as a Washington State University senior design project and is now open sourced for teams learning how to operate fleets of AI agents safely.
 
 ![AgentHarbor live fleet dashboard](./docs/images/agentharbor-live-fleet-dashboard.png)
 
 ## Agentic Setup
 
-Give this one command to your coding agent:
+Give this one command to the coding agent setting up your team's shared control node:
 
 ```bash
 git clone https://github.com/swordfish444/AgentHarbor.git && cd AgentHarbor && pnpm install && pnpm setup:agent
 ```
 
-That command creates local env, builds the shared packages, starts Postgres, applies the Prisma schema, starts the control node, and launches the dashboard at [http://localhost:3003/wallboard](http://localhost:3003/wallboard).
+That command creates local env, builds the shared packages, starts Postgres, applies the Prisma schema, starts the control node, and launches the team wallboard at [http://localhost:3003/wallboard](http://localhost:3003/wallboard).
 
 Turn on **Demo Mode** in the top-right of the wallboard to see the presentation loop immediately.
 
@@ -30,7 +32,7 @@ Prerequisites:
 - pnpm 10+
 - Docker Desktop or Docker Engine with Compose
 
-Run AgentHarbor locally:
+Run a local control node and dashboard:
 
 ```bash
 pnpm install
@@ -52,29 +54,29 @@ Then open [http://localhost:3003/wallboard](http://localhost:3003/wallboard).
 
 ## How It Connects
 
-Think of AgentHarbor as three pieces:
+Think of AgentHarbor as the shared visibility layer for a team:
 
-- **Control node** runs once and receives telemetry over HTTPS.
-- **Runner** runs on every developer or agent machine and sends heartbeat plus structured activity events.
-- **Dashboard** opens in the browser and turns those signals into the fleet view, agent drill-downs, alerts, and session timelines.
+- **Control node** runs once for the team and receives telemetry over HTTPS.
+- **Runner** runs on each engineer or automation machine and sends heartbeat plus structured activity events.
+- **Dashboard** opens in the browser and gives the team a shared fleet view, agent drill-downs, alerts, and session timelines.
 
 ```text
-Developer machine A   runner  ->  https://CONTROL_NODE:8443
-Developer machine B   runner  ->  https://CONTROL_NODE:8443
-Local automation box   runner  ->  https://CONTROL_NODE:8443
+Engineer laptop A      runner  ->  https://TEAM_CONTROL_NODE:8443
+Engineer workstation B runner  ->  https://TEAM_CONTROL_NODE:8443
+Remote automation box  runner  ->  https://TEAM_CONTROL_NODE:8443
 
-Dashboard browser  ->  https://CONTROL_NODE:8443  ->  Postgres
+Team dashboard browser ->  https://TEAM_CONTROL_NODE:8443  ->  Postgres
 ```
 
 For runners on the same machine as the control node, use `https://localhost:8443`.
 
-For runners on other machines, do not use `localhost`. Use the LAN IP or DNS name of the machine running the control node:
+For runners on other engineers' machines, do not use `localhost`. Use the LAN IP or DNS name of the machine running the team's control node:
 
 ```bash
 CONTROL_NODE_URL=https://192.168.1.50:8443
 ```
 
-Make sure port `8443` is reachable from the runner machines. For local development, the control node uses a self-signed certificate, so runners should enroll with `--allow-self-signed`.
+Make sure port `8443` is reachable from every runner machine. For local development, the control node uses a self-signed certificate, so runners should enroll with `--allow-self-signed`.
 
 ## Add A Real Runner
 
@@ -84,7 +86,7 @@ Build the runner CLI:
 pnpm --filter @agentharbor/runner build
 ```
 
-Enroll a machine:
+Enroll an engineer or automation machine:
 
 ```bash
 cd apps/runner
@@ -112,9 +114,9 @@ Runner credentials are stored locally at `~/.agentharbor/runner.json`.
 
 ## What You Get
 
-- A live wallboard with connected, running, and idle agent counts.
-- A paginated connected-agent table with agent name, machine, start time, completed tasks, errors, and tokens.
-- A Discord-style activity stream for recent agent work.
+- A shared team wallboard with connected, running, and idle agent counts.
+- A paginated connected-agent table showing which engineer or machine owns each active runner.
+- A Discord-style activity stream for recent agent work across the whole team.
 - Agent detail pages with recent tasks, failures, telemetry, token usage, and security alerts.
 - Session detail pages with evidence timelines for demo and real telemetry.
 - HTTPS JSON APIs for enrollment, heartbeat, telemetry ingestion, analytics, alerts, and streaming updates.
@@ -161,7 +163,7 @@ pnpm build
 
 ## Project Status
 
-AgentHarbor is an observability-first MVP. The foundation is ready for teams to connect runners, stream telemetry, use the live wallboard, drill into agent/session detail pages, and rehearse the demo loop. The next production layer is hardening, hosted deployment, richer runner installers, and eventually coordination features.
+AgentHarbor is an observability-first MVP for teams operating multiple AI coding agents at once. The foundation is ready for teams to connect runners, stream telemetry, use the live wallboard, drill into agent/session detail pages, and rehearse the demo loop. The next production layer is hardening, hosted deployment, richer runner installers, and eventually coordination features.
 
 ## Washington State University Credits
 
