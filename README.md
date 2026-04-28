@@ -293,7 +293,7 @@ For the full booth smoke-test workflow, see [booth-network-runbook.md](./docs/bo
 - Token-based runner auth with SHA-256 hashed token storage.
 - Admin bearer token support for destructive control-plane routes such as runner token revocation.
 - Minimal structured telemetry by default. Raw prompt text is not captured.
-- Self-signed TLS support for local development; bring your own certificate/key for shared environments.
+- Self-signed TLS support for local development; bring your own certificate/key for shared environments
 
 ## Status
 
