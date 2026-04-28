@@ -2,7 +2,7 @@
 
 AgentHarbor is an open source observability platform for distributed AI coding agents. It gives teams a central control node, lightweight runner clients, and an operator dashboard so they can see what Codex, Claude Code, Cursor, and local automation agents are doing across multiple machines.
 
-The current product is intentionally focused on telemetry, fleet visibility, failure drilldown, and demo-ready operations. It is not a task orchestrator yet.
+The current product is intentionally focused on telemetry, fleet visibility, failure drilldown, and demo-ready operations. At this moment, it is not a task orchestrator.
 
 ## What is implemented now
 
