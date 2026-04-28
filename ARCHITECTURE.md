@@ -21,7 +21,7 @@ flowchart LR
 ### Control node
 
 - Owns runner enrollment and token issuance.
-- Authenticates runner requests using bearer tokens hashed at rest.
+- Authenticates runner requests with bearer tokens hashed at rest.
 - Accepts heartbeats and telemetry events.
 - Maintains normalized runner/session/event state in Postgres.
 - Exposes read APIs for dashboards and future integrations.
