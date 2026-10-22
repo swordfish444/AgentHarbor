@@ -13,7 +13,7 @@
   "dependencies": {
     "@agentharbor/config": "workspace:*",
     "@agentharbor/shared": "workspace:*",
-    "next": "^16.0.0",
+    "next": "16.4.2",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "undici": "^7.16.0",
